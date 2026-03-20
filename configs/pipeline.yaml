@@ -1,0 +1,9 @@
+steps:
+  - kg_gen
+  - standardization
+  - subgraph_retrieval
+  - answering
+
+artifacts:
+  kg_root: data/kg
+  runs_root: data/runs

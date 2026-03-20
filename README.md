@@ -1,0 +1,54 @@
+# GraphRAG Pipeline Prototype
+
+This repository contains the scaffold for an end-to-end GraphRAG research pipeline built around five stages:
+
+1. `kg_gen` - extract a knowledge graph from text with `kg-gen`
+2. `standardization` - normalize user questions against canonical graph aliases
+3. `subgraph_retrieval` - retrieve a question-specific evidence subgraph
+4. `answering` - generate an answer and a reasoning trace from the subgraph
+5. `evaluation` - prepare and evaluate the pipeline with the MTRAG benchmark
+
+## Goals
+
+- Build a modular Python pipeline with shared global context
+- Persist knowledge graph artifacts as JSON files and load them into `networkx`
+- Expose each stage through a CLI command and a full end-to-end pipeline command
+- Keep the initial scaffold implementation-free so each stage can be developed independently
+
+## Project Structure
+
+```text
+configs/                 Configuration files for models and pipeline behavior
+data/                    Local data, KG artifacts, run outputs, and evaluation assets
+docs/                    Architecture and pipeline notes
+scripts/                 Helper scripts for dataset/bootstrap tasks
+src/graphrag_pipeline/   Main Python package
+tests/                   Initial test scaffold
+```
+
+## Planned Commands
+
+- `graphrag kg-build --input path/to/file.txt`
+- `graphrag normalize --question "..." --kg-dir data/kg/<name>`
+- `graphrag retrieve --question "..." --kg-dir data/kg/<name>`
+- `graphrag answer --question "..." --kg-dir data/kg/<name>`
+- `graphrag evaluate --dataset mtrag`
+- `graphrag run --question "..." --kg-dir data/kg/<name>`
+
+## Pipeline Design
+
+Each step receives and returns the same shared `PipelineContext` object.
+That context carries the current question, normalized form, graph handles,
+retrieved subgraph, answer, reasoning, provenance, and generated artifacts.
+
+The pipeline uses a filter-style pattern:
+
+- a runner executes steps in order
+- each step reads from the global context
+- each step writes its results back to the global context
+- the CLI formats the final context into a readable response
+
+## Status
+
+This commit only creates the project structure and placeholder modules.
+No step logic is implemented yet.

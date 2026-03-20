@@ -1,0 +1,1 @@
+Normalize the user question against the canonical KG vocabulary.

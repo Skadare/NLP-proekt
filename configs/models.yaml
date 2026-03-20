@@ -1,0 +1,6 @@
+default_provider: openai
+providers:
+  openai:
+    model: gpt-4o-mini
+  deepseek:
+    model: deepseek-chat

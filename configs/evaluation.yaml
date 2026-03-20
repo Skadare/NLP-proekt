@@ -1,0 +1,3 @@
+benchmark: mtrag
+enabled: false
+notes: Placeholder configuration for future MTRAG integration.
