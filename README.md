@@ -50,5 +50,6 @@ The pipeline uses a filter-style pattern:
 
 ## Status
 
-This commit only creates the project structure and placeholder modules.
-No step logic is implemented yet.
+- `kg-build` is implemented with `kg-gen` and persists KG artifacts.
+- `normalize` is implemented (LLM normalization first, alias replacement second).
+- Retrieval, answering, and evaluation stages still use placeholder implementations.

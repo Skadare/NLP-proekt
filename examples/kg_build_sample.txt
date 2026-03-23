@@ -1,0 +1,10 @@
+Microsoft Azure is a cloud computing platform from Microsoft.
+Azure Kubernetes Service, also called AKS, is a managed Kubernetes offering on Azure.
+AKS helps teams deploy and scale Kubernetes clusters.
+Microsoft owns GitHub.
+GitHub Actions is a CI/CD service provided by GitHub.
+OpenAI partnered with Microsoft on AI infrastructure.
+The United States is often written as USA or US.
+Seattle is a city in the United States.
+Amazon Web Services is also known as AWS.
+AWS offers Amazon EKS, a managed Kubernetes service.

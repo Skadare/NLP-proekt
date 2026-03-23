@@ -22,4 +22,18 @@ This step converts raw text into a persisted knowledge graph using `kg-gen`.
 - `provenance.jsonl`
 - `metadata.json`
 
-This module is a scaffold only. No extraction logic exists yet.
+## Current Status
+
+`kg-build` is implemented for plain text input:
+
+- reads text file
+- runs `kg-gen` extraction
+- writes KG artifacts under `data/kg/<kg_name>/`
+
+The extraction currently stores coarse provenance records and JSONL artifacts.
+
+### Dependency Note
+
+This implementation supports running `kg-build` without installing heavy
+retrieval extras like `sentence-transformers` or `scikit-learn`.
+Those packages are only required if you plan to use `kg-gen` retrieval helpers.
