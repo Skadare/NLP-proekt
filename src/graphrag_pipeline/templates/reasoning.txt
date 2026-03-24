@@ -1,1 +1,1 @@
-Explain the answer using the provided evidence and provenance.
+Provide a concise explanation grounded in the evidence. Cite evidence ids like [E1].
