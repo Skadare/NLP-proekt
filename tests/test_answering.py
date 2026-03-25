@@ -2,6 +2,7 @@ import pytest
 
 from graphrag_pipeline.context import PipelineContext
 from graphrag_pipeline.steps.answering.answer import generate_answer
+from graphrag_pipeline.steps.answering.reasoning import generate_reasoning
 from graphrag_pipeline.steps.answering.step import AnsweringStep
 from graphrag_pipeline.types import AnswerResult, RetrievedFact, SubgraphResult
 
@@ -23,7 +24,23 @@ def test_generate_answer_abstains_on_empty_subgraph() -> None:
     assert result.evidence_ids == []
 
 
-def test_generate_answer_with_single_fact_is_grounded() -> None:
+def test_generate_answer_with_single_fact_is_grounded(monkeypatch) -> None:
+    calls: list[dict[str, str]] = []
+
+    def fake_complete(self, *, provider, model, system_prompt, user_prompt):
+        calls.append(
+            {
+                "provider": provider,
+                "model": model,
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+            }
+        )
+        return "Azure offers AKS. [E1]"
+
+    from graphrag_pipeline.llm.client import LLMClient
+
+    monkeypatch.setattr(LLMClient, "complete", fake_complete)
     subgraph = SubgraphResult(
         facts=[
             RetrievedFact(
@@ -41,6 +58,48 @@ def test_generate_answer_with_single_fact_is_grounded() -> None:
     assert "Azure offers AKS" in result.answer
     assert "[E1]" in result.answer
     assert result.evidence_ids == ["E1"]
+    assert len(calls) == 1
+
+
+def test_generate_reasoning_calls_client_once(monkeypatch) -> None:
+    calls: list[dict[str, str]] = []
+
+    def fake_complete(self, *, provider, model, system_prompt, user_prompt):
+        calls.append(
+            {
+                "provider": provider,
+                "model": model,
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+            }
+        )
+        return "Because Azure offers AKS. [E1]"
+
+    from graphrag_pipeline.llm.client import LLMClient
+
+    monkeypatch.setattr(LLMClient, "complete", fake_complete)
+    subgraph = SubgraphResult(
+        facts=[
+            RetrievedFact(
+                triple_id="trp_1",
+                score=0.9,
+                head="Azure",
+                relation="offers",
+                tail="AKS",
+                provenance_id="prov_1",
+            )
+        ]
+    )
+    answer_result = AnswerResult(answer="Azure offers AKS. [E1]", reasoning=None)
+    reasoning = generate_reasoning(
+        "What does Azure offer?",
+        subgraph,
+        answer_result,
+        provenance=[],
+    )
+    assert reasoning is not None and reasoning.strip()
+    assert "Azure" in reasoning
+    assert len(calls) == 1
 
 
 def test_answering_step_prefers_raw_question(monkeypatch) -> None:
@@ -80,3 +139,41 @@ def test_answering_step_appends_metadata_steps(monkeypatch) -> None:
     context = PipelineContext(raw_question="What is GraphRAG?")
     AnsweringStep().run(context)
     assert context.metadata["steps"][-1] == "answering"
+
+
+def test_answering_step_calls_client_twice(monkeypatch) -> None:
+    calls: list[dict[str, str]] = []
+
+    def fake_complete(self, *, provider, model, system_prompt, user_prompt):
+        calls.append(
+            {
+                "provider": provider,
+                "model": model,
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+            }
+        )
+        if len(calls) == 1:
+            return "Azure offers AKS. [E1]"
+        return "Because Azure offers AKS. [E1]"
+
+    from graphrag_pipeline.llm.client import LLMClient
+
+    monkeypatch.setattr(LLMClient, "complete", fake_complete)
+    context = PipelineContext(
+        raw_question="What does Azure offer?",
+        subgraph=SubgraphResult(
+            facts=[
+                RetrievedFact(
+                    triple_id="trp_1",
+                    score=0.9,
+                    head="Azure",
+                    relation="offers",
+                    tail="AKS",
+                    provenance_id="prov_1",
+                )
+            ]
+        ),
+    )
+    AnsweringStep().run(context)
+    assert len(calls) == 2

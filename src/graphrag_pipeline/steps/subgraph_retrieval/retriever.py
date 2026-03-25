@@ -35,6 +35,29 @@ def _load_jsonl(path: Path) -> list[dict[str, object]]:
     return records
 
 
+def _normalize_text(text: str) -> str:
+    if not text:
+        return ""
+    return " ".join(text.strip().lower().split())
+
+
+def _dedupe_scored_candidates(
+    scored: list[tuple[dict[str, object], float]],
+) -> list[tuple[dict[str, object], float]]:
+    deduped: list[tuple[dict[str, object], float]] = []
+    seen_keys: set[tuple[str, str, str]] = set()
+    for edge_data, score in scored:
+        head_name = _normalize_text(str(edge_data.get("head_name") or ""))
+        relation_name = _normalize_text(str(edge_data.get("relation_name") or ""))
+        tail_name = _normalize_text(str(edge_data.get("tail_name") or ""))
+        key = (head_name, relation_name, tail_name)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        deduped.append((edge_data, score))
+    return deduped
+
+
 def load_kg_artifacts(
     kg_dir: str,
 ) -> tuple[list[Entity], list[Relation], list[Triple], list[ProvenanceRecord]]:
@@ -145,6 +168,10 @@ def retrieve_subgraph(
         return SubgraphResult()
 
     scored = score_candidates(question, candidates, anchor_ids)
+    if not scored:
+        return SubgraphResult()
+
+    scored = _dedupe_scored_candidates(scored)
     if not scored:
         return SubgraphResult()
 

@@ -186,6 +186,135 @@ def test_retrieve_subgraph_relation_overlap_boosts_score() -> None:
     assert subgraph.triple_ids == ["trp_1"]
 
 
+def test_self_referential_alias_is_downranked() -> None:
+    entities = [
+        Entity(entity_id="ent_1", canonical_name="Kubernetes"),
+        Entity(entity_id="ent_2", canonical_name="a managed Kubernetes service"),
+    ]
+    relations = [
+        Relation(relation_id="rel_1", canonical_name="is also called"),
+        Relation(relation_id="rel_2", canonical_name="is"),
+    ]
+    triples = [
+        Triple(triple_id="trp_alias", head_id="ent_1", relation_id="rel_1", tail_id="ent_1"),
+        Triple(triple_id="trp_def", head_id="ent_1", relation_id="rel_2", tail_id="ent_2"),
+    ]
+    graph = build_kg_graph(entities, relations, triples)
+
+    subgraph = retrieve_subgraph(
+        "What is Kubernetes?",
+        linked_entities=[
+            LinkedEntity(mention="Kubernetes", entity_id="ent_1", canonical_name="Kubernetes")
+        ],
+        entities=entities,
+        relations=relations,
+        triples=triples,
+        provenance=[],
+        graph=graph,
+        top_k=1,
+        include_two_hop=False,
+    )
+
+    assert subgraph.triple_ids == ["trp_def"]
+
+
+def test_definition_question_prefers_is_relation() -> None:
+    entities = [
+        Entity(entity_id="ent_1", canonical_name="AKS"),
+        Entity(entity_id="ent_2", canonical_name="a managed Kubernetes service"),
+        Entity(entity_id="ent_3", canonical_name="Kubernetes"),
+    ]
+    relations = [
+        Relation(relation_id="rel_1", canonical_name="is"),
+        Relation(relation_id="rel_2", canonical_name="offers"),
+    ]
+    triples = [
+        Triple(triple_id="trp_is", head_id="ent_1", relation_id="rel_1", tail_id="ent_2"),
+        Triple(triple_id="trp_offer", head_id="ent_1", relation_id="rel_2", tail_id="ent_3"),
+    ]
+    graph = build_kg_graph(entities, relations, triples)
+
+    subgraph = retrieve_subgraph(
+        "What is AKS?",
+        linked_entities=[LinkedEntity(mention="AKS", entity_id="ent_1", canonical_name="AKS")],
+        entities=entities,
+        relations=relations,
+        triples=triples,
+        provenance=[],
+        graph=graph,
+        top_k=1,
+        include_two_hop=False,
+    )
+
+    assert subgraph.triple_ids == ["trp_is"]
+
+
+def test_deduplication_removes_duplicate_facts() -> None:
+    entities = [
+        Entity(entity_id="ent_1", canonical_name="Azure"),
+        Entity(entity_id="ent_2", canonical_name="AKS"),
+        Entity(entity_id="ent_3", canonical_name="Functions"),
+    ]
+    relations = [
+        Relation(relation_id="rel_1", canonical_name="provides"),
+        Relation(relation_id="rel_2", canonical_name="offers"),
+    ]
+    triples = [
+        Triple(triple_id="trp_dup_1", head_id="ent_1", relation_id="rel_1", tail_id="ent_2"),
+        Triple(triple_id="trp_dup_2", head_id="ent_1", relation_id="rel_1", tail_id="ent_2"),
+        Triple(triple_id="trp_other", head_id="ent_1", relation_id="rel_2", tail_id="ent_3"),
+    ]
+    graph = build_kg_graph(entities, relations, triples)
+
+    subgraph = retrieve_subgraph(
+        "What does Azure provide?",
+        linked_entities=[LinkedEntity(mention="Azure", entity_id="ent_1", canonical_name="Azure")],
+        entities=entities,
+        relations=relations,
+        triples=triples,
+        provenance=[],
+        graph=graph,
+        top_k=3,
+        include_two_hop=False,
+    )
+
+    duplicates = {"trp_dup_1", "trp_dup_2"}
+    assert len([triple_id for triple_id in subgraph.triple_ids if triple_id in duplicates]) == 1
+    assert "trp_other" in subgraph.triple_ids
+
+
+def test_useful_facts_are_preserved() -> None:
+    entities = [
+        Entity(entity_id="ent_1", canonical_name="Kubernetes"),
+        Entity(entity_id="ent_2", canonical_name="teams deploy and scale Kubernetes clusters"),
+    ]
+    relations = [
+        Relation(relation_id="rel_1", canonical_name="helps"),
+        Relation(relation_id="rel_2", canonical_name="is also known as"),
+    ]
+    triples = [
+        Triple(triple_id="trp_helpful", head_id="ent_1", relation_id="rel_1", tail_id="ent_2"),
+        Triple(triple_id="trp_alias", head_id="ent_1", relation_id="rel_2", tail_id="ent_1"),
+    ]
+    graph = build_kg_graph(entities, relations, triples)
+
+    subgraph = retrieve_subgraph(
+        "What is Kubernetes?",
+        linked_entities=[
+            LinkedEntity(mention="Kubernetes", entity_id="ent_1", canonical_name="Kubernetes")
+        ],
+        entities=entities,
+        relations=relations,
+        triples=triples,
+        provenance=[],
+        graph=graph,
+        top_k=2,
+        include_two_hop=False,
+    )
+
+    assert "trp_helpful" in subgraph.triple_ids
+
+
 def test_subgraph_step_uses_existing_context_graph(monkeypatch) -> None:
     entities, relations, triples, graph = _simple_graph_fixture()
     context = PipelineContext(

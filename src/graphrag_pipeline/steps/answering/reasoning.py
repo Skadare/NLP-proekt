@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import cast
 
+from graphrag_pipeline.llm.client import LLMClient
 from graphrag_pipeline.llm.prompts import get_prompt
 from graphrag_pipeline.steps.answering.formatter import format_evidence
 from graphrag_pipeline.types import AnswerResult, ProvenanceRecord, SubgraphResult
@@ -35,18 +36,25 @@ def generate_reasoning(
     prompt = get_prompt("reasoning")
     formatted = format_evidence(subgraph, provenance)
     evidence_text = cast(str, formatted["evidence_text"])
-    evidence_ids = cast(list[str], formatted["evidence_ids"])
 
     if not evidence_text:
         return "No evidence facts were available to justify the answer."
 
-    _ = provider
-    _ = model
-    _ = prompt
-
-    citations = " ".join(f"[{evidence_id}]" for evidence_id in evidence_ids)
-    top_fact = subgraph.facts[0]
-    return (
-        f"The evidence shows {top_fact.head} {top_fact.relation} {top_fact.tail}. "
-        f"This supports the answer: {answer.answer} {citations}"
+    user_prompt = (
+        "Explain briefly why the answer is supported by the evidence.\n"
+        "Cite evidence ids inline like [E1].\n\n"
+        f"Question:\n{question}\n\n"
+        f"Answer:\n{answer.answer}\n\n"
+        f"Evidence:\n{evidence_text}\n"
     )
+
+    client = LLMClient()
+    try:
+        return client.complete(
+            provider=provider,
+            model=model,
+            system_prompt=prompt,
+            user_prompt=user_prompt,
+        )
+    except Exception:
+        return "Unable to generate reasoning due to LLM error."

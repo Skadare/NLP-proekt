@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import cast
 
+from graphrag_pipeline.llm.client import LLMClient
 from graphrag_pipeline.llm.prompts import get_prompt
 from graphrag_pipeline.steps.answering.formatter import format_evidence
 from graphrag_pipeline.types import AnswerResult, ProvenanceRecord, SubgraphResult
@@ -25,11 +26,6 @@ def generate_answer(
     provider: str = "openai",
     model: str = "gpt-4o-mini",
 ) -> AnswerResult:
-    """Generate an answer grounded in retrieved evidence.
-
-    This implementation returns a deterministic grounded response until
-    the LLM client is wired in.
-    """
     if not question.strip():
         raise ValueError("Question is empty; cannot generate answer.")
 
@@ -44,11 +40,29 @@ def generate_answer(
     if not evidence_text:
         return _abstained_result()
 
-    _ = provider
-    _ = model
-    _ = prompt
+    user_prompt = (
+        "Answer the question using only the provided evidence.\n"
+        "If the evidence is insufficient, say so briefly.\n"
+        "Cite evidence ids inline like [E1].\n\n"
+        f"Question:\n{question}\n\n"
+        f"Evidence:\n{evidence_text}\n"
+    )
 
-    top_fact = subgraph.facts[0]
-    top_id = evidence_ids[0] if evidence_ids else "E1"
-    answer = f"{top_fact.head} {top_fact.relation} {top_fact.tail}. [{top_id}]"
-    return AnswerResult(answer=answer, reasoning=None, evidence_ids=evidence_ids)
+    client = LLMClient()
+    try:
+        answer = client.complete(
+            provider=provider,
+            model=model,
+            system_prompt=prompt,
+            user_prompt=user_prompt,
+        )
+        print(f"[generate_answer] raw answer: {answer!r}")
+    except Exception as e:
+        print(f"[generate_answer] LLM error: {e}")
+        return _abstained_result()
+
+    if not answer or not answer.strip():
+        print("[generate_answer] empty answer returned by LLM")
+        return _abstained_result()
+
+    return AnswerResult(answer=answer.strip(), reasoning=None, evidence_ids=evidence_ids)
