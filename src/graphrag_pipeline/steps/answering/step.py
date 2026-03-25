@@ -18,12 +18,15 @@ class AnsweringStep(PipelineStep):
         if question is None:
             raise ValueError("Question is required for answer generation.")
 
+        debug = bool(context.metadata.get("debug"))
+
         context.answer_result = generate_answer(
             question,
             context.subgraph,
             context.provenance,
             provider=self.provider,
             model=self.model,
+            debug=debug,
         )
         context.answer_result.reasoning = generate_reasoning(
             question,

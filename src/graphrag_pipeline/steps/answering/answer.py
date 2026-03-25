@@ -25,6 +25,7 @@ def generate_answer(
     *,
     provider: str = "openai",
     model: str = "gpt-4o-mini",
+    debug: bool = False,
 ) -> AnswerResult:
     if not question.strip():
         raise ValueError("Question is empty; cannot generate answer.")
@@ -36,6 +37,15 @@ def generate_answer(
     formatted = format_evidence(subgraph, provenance)
     evidence_text = cast(str, formatted["evidence_text"])
     evidence_ids = cast(list[str], formatted["evidence_ids"])
+
+    if debug:
+        print(
+            "[answering]",
+            {
+                "evidence_ids": evidence_ids,
+                "evidence_text": evidence_text,
+            },
+        )
 
     if not evidence_text:
         return _abstained_result()
@@ -56,7 +66,7 @@ def generate_answer(
             system_prompt=prompt,
             user_prompt=user_prompt,
         )
-        print(f"[generate_answer] raw answer: {answer!r}")
+
     except Exception as e:
         print(f"[generate_answer] LLM error: {e}")
         return _abstained_result()

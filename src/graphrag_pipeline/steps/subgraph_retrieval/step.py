@@ -48,4 +48,12 @@ class SubgraphRetrievalStep(PipelineStep):
             include_two_hop=self.include_two_hop,
         )
         context.metadata.setdefault("steps", []).append(self.name)
+        if context.metadata.get("debug"):
+            print(
+                "[retrieval]",
+                {
+                    "normalized_question": context.normalized_question,
+                    "facts": [fact.model_dump() for fact in context.subgraph.facts],
+                },
+            )
         return context
