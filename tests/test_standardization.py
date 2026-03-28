@@ -60,6 +60,8 @@ def test_standardization_step_llm_then_alias(monkeypatch, tmp_path: Path) -> Non
     result = StandardizationStep().run(context)
 
     assert result.metadata["llm_normalized_question"] == "What is the capital of US?"
+    assert result.metadata["standalone_rewrite"] == "What is the capital of US?"
+    assert result.metadata["retrieval_query"] == "What is the capital of United States?"
     assert result.normalized_question == "What is the capital of United States?"
     assert len(result.linked_entities) == 1
 

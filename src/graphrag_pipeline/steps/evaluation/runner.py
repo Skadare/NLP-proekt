@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import shutil
 import subprocess
 from pathlib import Path
@@ -17,6 +18,20 @@ from graphrag_pipeline.steps.subgraph_retrieval.step import SubgraphRetrievalSte
 from graphrag_pipeline.types import ConversationMessage
 
 from .mtrag_adapter import build_generation_record, build_retrieval_record, map_subgraph_to_contexts
+
+
+SAMPLE_PRESET_TASKS = {
+    "smoke": 8,
+    "dev": 64,
+    "stable": 160,
+}
+
+COLLECTION_STEM_BY_NAME = {
+    "mt-rag-clapnq-elser-512-100-20240503": "clapnq",
+    "mt-rag-govt-elser-512-100-20240611": "govt",
+    "mt-rag-fiqa-beir-elser-512-100-20240501": "fiqa",
+    "mt-rag-ibmcloud-elser-512-100-20240502": "cloud",
+}
 
 
 def _load_jsonl(path: Path) -> list[dict[str, object]]:
@@ -100,6 +115,138 @@ def _extract_collection(task: dict[str, object]) -> str | None:
     return None
 
 
+def _extract_task_id(task: dict[str, object]) -> str | None:
+    task_id = task.get("task_id")
+    if isinstance(task_id, str) and task_id:
+        return task_id
+    return None
+
+
+def _extract_conversation_id(task: dict[str, object]) -> str | None:
+    conversation_id = task.get("conversation_id")
+    if isinstance(conversation_id, str) and conversation_id:
+        return conversation_id
+
+    task_id = _extract_task_id(task)
+    if task_id is None:
+        return None
+
+    if "<::>" in task_id:
+        prefix, _, _ = task_id.partition("<::>")
+        return prefix or task_id
+    return task_id
+
+
+def _resolve_kg_dir_for_collection(base_kg_dir: str, collection: str | None) -> str:
+    base_path = Path(base_kg_dir)
+    if collection is None:
+        return base_kg_dir
+
+    stem = COLLECTION_STEM_BY_NAME.get(collection)
+    candidate_dirs: list[Path] = []
+    if stem is not None:
+        candidate_dirs.append(base_path / stem)
+    candidate_dirs.append(base_path / collection)
+
+    for candidate in candidate_dirs:
+        if not candidate.exists() or not candidate.is_dir():
+            continue
+        if (candidate / "entities.jsonl").exists():
+            return str(candidate)
+
+    return base_kg_dir
+
+
+def _sample_tasks(
+    tasks: list[dict[str, object]],
+    *,
+    max_tasks: int,
+    sample_mode: str,
+    seed: int,
+) -> list[dict[str, object]]:
+    if max_tasks <= 0 or len(tasks) <= max_tasks:
+        return list(tasks)
+
+    if sample_mode == "head":
+        return tasks[:max_tasks]
+    if sample_mode != "stratified":
+        raise ValueError("--sample-mode must be one of: head, stratified")
+
+    grouped: dict[str, dict[str, list[dict[str, object]]]] = {}
+    for task in tasks:
+        collection = _extract_collection(task)
+        key = collection if collection is not None else "unknown"
+        conversation_id = _extract_conversation_id(task)
+        conversation_key = conversation_id if conversation_id is not None else "unknown"
+        grouped.setdefault(key, {}).setdefault(conversation_key, []).append(task)
+
+    rng = random.Random(seed)
+
+    ordered_keys = sorted(grouped.keys())
+    conversations_by_collection: dict[str, list[str]] = {}
+    cursor_by_collection: dict[str, int] = {}
+    for collection_key in ordered_keys:
+        conversation_map = grouped[collection_key]
+        conversation_keys = list(conversation_map.keys())
+        rng.shuffle(conversation_keys)
+        conversations_by_collection[collection_key] = conversation_keys
+        cursor_by_collection[collection_key] = 0
+
+    sampled: list[dict[str, object]] = []
+
+    while len(sampled) < max_tasks:
+        advanced = False
+        for collection_key in ordered_keys:
+            conversation_keys = conversations_by_collection[collection_key]
+            if not conversation_keys:
+                continue
+
+            start = cursor_by_collection[collection_key]
+            consumed = False
+            for offset in range(len(conversation_keys)):
+                idx = (start + offset) % len(conversation_keys)
+                conversation_key = conversation_keys[idx]
+                queue = grouped[collection_key][conversation_key]
+                if not queue:
+                    continue
+                sampled.append(queue.pop(0))
+                cursor_by_collection[collection_key] = (idx + 1) % len(conversation_keys)
+                advanced = True
+                consumed = True
+                break
+
+            if not consumed:
+                continue
+            if len(sampled) >= max_tasks:
+                break
+        if not advanced:
+            break
+
+    return sampled
+
+
+def _filter_tasks_by_ids(
+    tasks: list[dict[str, object]],
+    selected_task_ids: list[str],
+) -> list[dict[str, object]]:
+    if not selected_task_ids:
+        return []
+
+    order = {task_id: idx for idx, task_id in enumerate(selected_task_ids)}
+    selected: list[tuple[int, dict[str, object]]] = []
+    for task in tasks:
+        task_id = _extract_task_id(task)
+        if task_id is None:
+            continue
+        rank = order.get(task_id)
+        if rank is None:
+            continue
+        selected.append((rank, task))
+
+    selected.sort(key=lambda item: item[0])
+    return [task for _, task in selected]
+
+
 def _build_runner(*, include_answering: bool, provider: str, model: str) -> PipelineRunner:
     steps = [
         StandardizationStep(provider=provider, model=model),
@@ -129,14 +276,16 @@ def _run_tasks(
 
     for task in tasks:
         question = _extract_question(task)
+        collection = _extract_collection(task)
+        resolved_kg_dir = _resolve_kg_dir_for_collection(kg_dir, collection)
         conversation_id = task.get("conversation_id")
         task_id = task.get("task_id")
         context = PipelineContext(
             raw_question=question,
-            kg_dir=kg_dir,
+            kg_dir=resolved_kg_dir,
             conversation_id=conversation_id if isinstance(conversation_id, str) else None,
             task_id=task_id if isinstance(task_id, str) else None,
-            collection=_extract_collection(task),
+            collection=collection,
             conversation_messages=_extract_conversation(task),
         )
         context = runner.run(context)
@@ -151,6 +300,8 @@ def _run_tasks(
         if debug_task_id and task_id == debug_task_id:
             print("[evaluation debug] task_id:", task_id)
             print("[evaluation debug] question:", question)
+            print("[evaluation debug] collection:", collection)
+            print("[evaluation debug] kg_dir:", resolved_kg_dir)
             print("[evaluation debug] normalized_question:", context.normalized_question)
             print("[evaluation debug] subgraph facts:", len(context.subgraph.facts))
             for fact in context.subgraph.facts[:5]:
@@ -275,23 +426,36 @@ def run_evaluation() -> None:
     parser.add_argument("--kg-dir", type=str, required=True)
     parser.add_argument("--provider", type=str, default="openai")
     parser.add_argument("--model", type=str, default="gpt-4o-mini")
-    parser.add_argument("--top-k", type=int, default=5)
+    parser.add_argument("--top-k", type=int, default=8)
     parser.add_argument("--max-tasks", type=int, default=0)
     parser.add_argument("--skip-generation", action="store_true")
     parser.add_argument("--retrieval-input", type=Path, default=None)
     parser.add_argument("--generation-input", type=Path, default=None)
     parser.add_argument("--debug-task-id", type=str, default=None)
+    parser.add_argument("--sample-mode", type=str, default="head")
+    parser.add_argument("--sample-preset", type=str, default="none")
+    parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--run-eval", action="store_true")
     args = parser.parse_args()
     if args.top_k < 1 or args.top_k > 10:
         raise ValueError("--top-k must be in range [1, 10] for MT-RAG format compatibility.")
 
+    if args.sample_preset not in {"none", *SAMPLE_PRESET_TASKS.keys()}:
+        raise ValueError("--sample-preset must be one of: none, smoke, dev, stable")
+
+    max_tasks = args.max_tasks
+    if args.sample_preset != "none" and max_tasks <= 0:
+        max_tasks = SAMPLE_PRESET_TASKS[args.sample_preset]
+
     default_rag = args.mtrag_root / "mtrag-human" / "generation_tasks" / "RAG.jsonl"
     retrieval_input = args.retrieval_input or default_rag
     generation_input = args.generation_input or default_rag
-    retrieval_tasks = _load_jsonl(retrieval_input)
-    if args.max_tasks > 0:
-        retrieval_tasks = retrieval_tasks[: args.max_tasks]
+    retrieval_tasks = _sample_tasks(
+        _load_jsonl(retrieval_input),
+        max_tasks=max_tasks,
+        sample_mode=args.sample_mode,
+        seed=args.seed,
+    )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     retrieval_predictions = args.output_dir / "retrieval_predictions.jsonl"
@@ -311,14 +475,23 @@ def run_evaluation() -> None:
         file_name="retrieval_input_sliced.jsonl",
         input_path=retrieval_input,
         tasks=retrieval_tasks,
-        max_tasks=args.max_tasks,
+        max_tasks=max_tasks,
     )
+
+    selected_task_ids = [
+        task_id for task in retrieval_tasks if (task_id := _extract_task_id(task)) is not None
+    ]
 
     generation_predictions: Path | None = None
     if not args.skip_generation:
-        generation_tasks = _load_jsonl(generation_input)
-        if args.max_tasks > 0:
-            generation_tasks = generation_tasks[: args.max_tasks]
+        generation_tasks = _filter_tasks_by_ids(_load_jsonl(generation_input), selected_task_ids)
+        if not generation_tasks:
+            generation_tasks = _sample_tasks(
+                _load_jsonl(generation_input),
+                max_tasks=max_tasks,
+                sample_mode=args.sample_mode,
+                seed=args.seed,
+            )
         generation_predictions_path = args.output_dir / "generation_predictions.jsonl"
         generation_records = _run_tasks(
             generation_tasks,
@@ -336,7 +509,7 @@ def run_evaluation() -> None:
             file_name="generation_input_sliced.jsonl",
             input_path=generation_input,
             tasks=generation_tasks,
-            max_tasks=args.max_tasks,
+            max_tasks=max_tasks,
         )
     else:
         generation_checker_input = generation_input

@@ -68,6 +68,8 @@ def normalize(
 
     payload = {
         "raw_question": result.raw_question,
+        "standalone_rewrite": result.metadata.get("standalone_rewrite"),
+        "retrieval_query": result.metadata.get("retrieval_query"),
         "llm_normalized_question": result.metadata.get("llm_normalized_question"),
         "normalized_question": result.normalized_question,
         "linked_entities": [item.model_dump() for item in result.linked_entities],
@@ -77,7 +79,9 @@ def normalize(
 
 @app.command("kg-build-mtrag")
 def kg_build_mtrag(
-    mtrag_root: str = typer.Option(..., "--mtrag-root", help="Path to mt-rag-benchmark repository."),
+    mtrag_root: str = typer.Option(
+        ..., "--mtrag-root", help="Path to mt-rag-benchmark repository."
+    ),
     output_dir: str = typer.Option(..., "--output-dir", help="Directory for KG artifacts."),
     input_file: str | None = typer.Option(
         None,
@@ -92,6 +96,26 @@ def kg_build_mtrag(
     cluster: bool = typer.Option(False, "--cluster/--no-cluster", help="Enable kg-gen clustering."),
     max_tasks: int = typer.Option(0, "--max-tasks", help="Limit number of tasks."),
     max_passages: int = typer.Option(0, "--max-passages", help="Limit unique passages to ingest."),
+    source_mode: str = typer.Option(
+        "task-contexts",
+        "--source-mode",
+        help="Data source: task-contexts (fast smoke) or passage-corpus (benchmark-faithful).",
+    ),
+    collections: list[str] = typer.Option(
+        [],
+        "--collection",
+        help="Collection filters for passage-corpus mode: clapnq/govt/fiqa/cloud or MT-RAG collection names.",
+    ),
+    split_by_collection: bool = typer.Option(
+        False,
+        "--split-by-collection",
+        help="Build one KG directory per selected collection under output-dir.",
+    ),
+    max_passages_per_collection: int = typer.Option(
+        0,
+        "--max-passages-per-collection",
+        help="Passage cap per collection when split-by-collection is enabled.",
+    ),
 ) -> None:
     """Build a benchmark-aligned KG from MT-RAG tasks."""
     try:
@@ -105,6 +129,10 @@ def kg_build_mtrag(
             cluster=cluster,
             max_tasks=max_tasks,
             max_passages=max_passages,
+            source_mode=source_mode,
+            collections=collections,
+            split_by_collection=split_by_collection,
+            max_passages_per_collection=max_passages_per_collection,
         )
     except Exception as exc:
         typer.echo(f"Error: {exc}", err=True)
@@ -196,7 +224,7 @@ def evaluate(
     output_dir: str = typer.Option("data/eval_out", "--output-dir", help="Output directory."),
     provider: str = typer.Option("openai", "--provider", help="Model provider."),
     model: str = typer.Option("gpt-4o-mini", "--model", help="Model name."),
-    top_k: int = typer.Option(5, "--top-k", help="Number of top facts to return."),
+    top_k: int = typer.Option(8, "--top-k", help="Number of top facts to return."),
     max_tasks: int = typer.Option(0, "--max-tasks", help="Limit number of tasks."),
     skip_generation: bool = typer.Option(False, "--skip-generation", help="Skip generation."),
     retrieval_input: str | None = typer.Option(
@@ -208,6 +236,17 @@ def evaluate(
     debug_task_id: str | None = typer.Option(
         None, "--debug-task-id", help="Log debug output for a single task id."
     ),
+    sample_mode: str = typer.Option(
+        "head",
+        "--sample-mode",
+        help="Task sampling mode when max-tasks is set: head or stratified.",
+    ),
+    sample_preset: str = typer.Option(
+        "none",
+        "--sample-preset",
+        help="Optional preset task count: none, smoke, dev, stable.",
+    ),
+    seed: int = typer.Option(7, "--seed", help="Random seed for stratified sampling."),
     run_eval: bool = typer.Option(False, "--run-eval", help="Run retrieval evaluation."),
 ) -> None:
     """Run evaluation."""
@@ -243,6 +282,12 @@ def evaluate(
         argv.extend(["--generation-input", generation_input])
     if debug_task_id is not None:
         argv.extend(["--debug-task-id", debug_task_id])
+    if sample_mode != "head":
+        argv.extend(["--sample-mode", sample_mode])
+    if sample_preset != "none":
+        argv.extend(["--sample-preset", sample_preset])
+    if seed != 7:
+        argv.extend(["--seed", str(seed)])
     if run_eval:
         argv.append("--run-eval")
 

@@ -52,6 +52,8 @@ class StandardizationStep(PipelineStep):
 
         context.normalized_question = final_normalized
         context.linked_entities = linked_entities
+        context.metadata["standalone_rewrite"] = llm_normalized
+        context.metadata["retrieval_query"] = final_normalized
         context.metadata["llm_normalized_question"] = llm_normalized
         context.metadata["standardization_provider"] = self.provider
         context.metadata["standardization_model"] = self.model

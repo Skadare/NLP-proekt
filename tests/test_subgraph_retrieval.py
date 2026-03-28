@@ -457,6 +457,28 @@ def test_subgraph_step_uses_normalized_question_first() -> None:
     assert result.subgraph.triple_ids == ["trp_1"]
 
 
+def test_subgraph_step_falls_back_to_raw_question_if_rewrite_fails() -> None:
+    entities, relations, triples, graph = _simple_graph_fixture()
+    context = PipelineContext(
+        raw_question="What does Azure offer?",
+        normalized_question="What does GCP offer?",
+        entities=entities,
+        relations=relations,
+        triples=triples,
+        provenance=[],
+        graph=graph,
+        metadata={
+            "retrieval_query": "What does GCP offer?",
+            "standalone_rewrite": "What does GCP offer?",
+        },
+    )
+
+    result = SubgraphRetrievalStep(top_k=1, include_two_hop=False).run(context)
+
+    assert result.subgraph.triple_ids == ["trp_1"]
+    assert result.metadata["retrieval_query_used"] == "What does Azure offer?"
+
+
 def test_subgraph_step_requires_question() -> None:
     context = PipelineContext()
     with pytest.raises(ValueError):
