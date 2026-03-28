@@ -1,7 +1,9 @@
 from pathlib import Path
+import json
 
 from graphrag_pipeline.steps.kg_gen.command import run_command
 from graphrag_pipeline.steps.kg_gen.extractor import KGExtractionArtifacts
+from graphrag_pipeline.steps.kg_gen.mtrag_command import run_mtrag_command
 from graphrag_pipeline.types import Entity, ProvenanceRecord, Relation, Triple
 
 
@@ -109,3 +111,83 @@ def test_kg_build_loads_api_key_from_dotenv(tmp_path: Path, monkeypatch) -> None
     output_dir_value = summary["output_dir"]
     assert isinstance(output_dir_value, str)
     assert Path(output_dir_value).exists()
+
+
+def test_mtrag_build_resume_skips_completed_collection(tmp_path: Path, monkeypatch) -> None:
+    input_file = tmp_path / "tasks.jsonl"
+    input_file.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "task_id": "t1",
+                        "Collection": "mt-rag-clapnq-elser-512-100-20240503",
+                        "contexts": [{"document_id": "doc_1", "text": "alpha text"}],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "task_id": "t2",
+                        "Collection": "mt-rag-govt-elser-512-100-20240611",
+                        "contexts": [{"document_id": "doc_2", "text": "beta text"}],
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    clapnq_dir = tmp_path / "out" / "clapnq"
+    clapnq_dir.mkdir(parents=True)
+    completed_summary = {
+        "output_dir": str(clapnq_dir),
+        "passages_processed": 1,
+        "collections": {"mt-rag-clapnq-elser-512-100-20240503": 1},
+    }
+    (clapnq_dir / "checkpoint.json").write_text(
+        json.dumps({"status": "completed", "summary": completed_summary}),
+        encoding="utf-8",
+    )
+    (tmp_path / "out" / "checkpoint.json").write_text(
+        json.dumps({"completed_collections": ["clapnq"]}),
+        encoding="utf-8",
+    )
+
+    fake_result = KGExtractionArtifacts(
+        entities=[],
+        relations=[],
+        triples=[],
+        provenance=[],
+        aliases=[],
+        metadata={"model": "openai/gpt-4o-mini"},
+    )
+    calls: list[str] = []
+
+    def fake_extract(text: str, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(text)
+        return fake_result
+
+    monkeypatch.setattr(
+        "graphrag_pipeline.steps.kg_gen.mtrag_command.extract_graph_from_text",
+        fake_extract,
+    )
+
+    summary = run_mtrag_command(
+        mtrag_root=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+        input_file=str(input_file),
+        source_mode="task-contexts",
+        split_by_collection=True,
+        collections=["clapnq", "govt"],
+        max_passages_per_collection=1,
+        resume=True,
+    )
+
+    assert len(calls) == 1
+    assert calls[0] == "beta text"
+    collections = summary["collections"]
+    assert isinstance(collections, dict)
+    assert "clapnq" in collections
+    assert "govt" in collections

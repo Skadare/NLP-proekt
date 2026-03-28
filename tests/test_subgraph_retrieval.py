@@ -10,7 +10,7 @@ from graphrag_pipeline.steps.subgraph_retrieval.retriever import (
     retrieve_subgraph,
 )
 from graphrag_pipeline.steps.subgraph_retrieval.step import SubgraphRetrievalStep
-from graphrag_pipeline.types import Entity, LinkedEntity, Relation, Triple
+from graphrag_pipeline.types import Entity, LinkedEntity, ProvenanceRecord, Relation, Triple
 
 
 def _simple_graph_fixture() -> tuple[list[Entity], list[Relation], list[Triple], nx.MultiDiGraph]:
@@ -477,6 +477,33 @@ def test_subgraph_step_falls_back_to_raw_question_if_rewrite_fails() -> None:
 
     assert result.subgraph.triple_ids == ["trp_1"]
     assert result.metadata["retrieval_query_used"] == "What does Azure offer?"
+
+
+def test_retrieve_subgraph_falls_back_to_passage_snippet_match() -> None:
+    provenance = [
+        ProvenanceRecord(
+            provenance_id="prov_1",
+            doc_id="Economy of India",
+            passage_id="passage_1",
+            snippet="The services sector has the largest share of India's GDP.",
+        )
+    ]
+
+    subgraph = retrieve_subgraph(
+        "What sector has the largest share of India's GDP?",
+        linked_entities=[],
+        entities=[],
+        relations=[],
+        triples=[],
+        provenance=provenance,
+        graph=build_kg_graph([], [], []),
+        top_k=3,
+        include_two_hop=False,
+    )
+
+    assert subgraph.facts
+    assert subgraph.facts[0].provenance_id == "prov_1"
+    assert subgraph.facts[0].relation == "mentions"
 
 
 def test_subgraph_step_requires_question() -> None:

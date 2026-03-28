@@ -116,6 +116,16 @@ def kg_build_mtrag(
         "--max-passages-per-collection",
         help="Passage cap per collection when split-by-collection is enabled.",
     ),
+    progress_every: int = typer.Option(
+        10,
+        "--progress-every",
+        help="Print progress and update checkpoint every N passages.",
+    ),
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        help="Skip completed collection builds when checkpoints already exist.",
+    ),
 ) -> None:
     """Build a benchmark-aligned KG from MT-RAG tasks."""
     try:
@@ -133,6 +143,8 @@ def kg_build_mtrag(
             collections=collections,
             split_by_collection=split_by_collection,
             max_passages_per_collection=max_passages_per_collection,
+            progress_every=progress_every,
+            resume=resume,
         )
     except Exception as exc:
         typer.echo(f"Error: {exc}", err=True)

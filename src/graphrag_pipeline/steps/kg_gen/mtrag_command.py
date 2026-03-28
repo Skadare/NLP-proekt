@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import time
 import zipfile
 
 from graphrag_pipeline.types import Entity, ProvenanceRecord, Relation, Triple
@@ -22,6 +23,55 @@ COLLECTION_NAME_BY_STEM: dict[str, str] = {
 }
 
 STEM_BY_COLLECTION_NAME = {value: key for key, value in COLLECTION_NAME_BY_STEM.items()}
+COLLECTION_CHECKPOINT = "checkpoint.json"
+
+
+def _read_checkpoint(path: Path) -> dict[str, object] | None:
+    if not path.exists() or not path.is_file():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, dict):
+        return payload
+    return None
+
+
+def _write_checkpoint(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+
+
+def _format_eta(seconds: float | None) -> str:
+    if seconds is None or seconds < 0:
+        return "unknown"
+    total = int(seconds)
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours > 0:
+        return f"{hours}h {minutes:02d}m {secs:02d}s"
+    return f"{minutes}m {secs:02d}s"
+
+
+def _print_progress(
+    *,
+    collection_label: str,
+    processed: int,
+    total: int,
+    global_processed: int | None,
+    global_total: int | None,
+    started_at: float,
+) -> None:
+    elapsed = max(0.0, time.time() - started_at)
+    avg = elapsed / processed if processed > 0 else 0.0
+    remaining = max(total - processed, 0)
+    eta = avg * remaining if processed > 0 else None
+    global_text = ""
+    if global_processed is not None and global_total is not None:
+        global_text = f" global={global_processed}/{global_total}"
+    print(
+        "[kg-build-mtrag]"
+        f" collection={collection_label} processed={processed}/{total}{global_text}"
+        f" elapsed={_format_eta(elapsed)} avg={avg:.2f}s/pass eta={_format_eta(eta)}"
+    )
 
 
 def _load_jsonl(path: Path) -> list[dict[str, object]]:
@@ -210,6 +260,8 @@ def run_mtrag_command(
     collections: list[str] | None = None,
     split_by_collection: bool = False,
     max_passages_per_collection: int = 0,
+    progress_every: int = 10,
+    resume: bool = False,
 ) -> dict[str, object]:
     """Build an MT-RAG-aligned KG using benchmark passage ids as provenance."""
 
@@ -239,12 +291,43 @@ def run_mtrag_command(
             )
 
         output_root = Path(output_dir)
+        root_checkpoint_path = output_root / COLLECTION_CHECKPOINT
+        root_checkpoint = _read_checkpoint(root_checkpoint_path) if resume else None
+        completed_collections = set()
+        if isinstance(root_checkpoint, dict):
+            completed_raw = root_checkpoint.get("completed_collections")
+            if isinstance(completed_raw, list):
+                completed_collections = {item for item in completed_raw if isinstance(item, str)}
+
         collection_summaries: dict[str, dict[str, object]] = {}
         total_passages = 0
+        global_total = (
+            per_collection_limit * len(collection_stems) if per_collection_limit > 0 else None
+        )
+        global_processed = 0
+        run_started_at = time.time()
         for stem in collection_stems:
+            collection_output_dir = output_root / stem
+            collection_checkpoint_path = collection_output_dir / COLLECTION_CHECKPOINT
+            if resume and stem in completed_collections and collection_checkpoint_path.exists():
+                cached = _read_checkpoint(collection_checkpoint_path)
+                if isinstance(cached, dict) and cached.get("status") == "completed":
+                    summary = cached.get("summary")
+                    if isinstance(summary, dict):
+                        collection_summaries[stem] = summary
+                        processed = summary.get("passages_processed")
+                        if isinstance(processed, int):
+                            total_passages += processed
+                            global_processed += processed
+                        print(
+                            f"[kg-build-mtrag] collection={stem} status=skipped reason=resume-complete"
+                        )
+                        continue
+
+            print(f"[kg-build-mtrag] collection={stem} status=starting")
             summary = run_mtrag_command(
                 mtrag_root=mtrag_root,
-                output_dir=str(output_root / stem),
+                output_dir=str(collection_output_dir),
                 input_file=input_file,
                 provider=provider,
                 model=model,
@@ -256,20 +339,68 @@ def run_mtrag_command(
                 collections=[stem],
                 split_by_collection=False,
                 max_passages_per_collection=0,
+                progress_every=progress_every,
+                resume=resume,
             )
             collection_summaries[stem] = summary
 
             processed = summary.get("passages_processed")
             if isinstance(processed, int):
                 total_passages += processed
+                global_processed += processed
+            elapsed = time.time() - run_started_at
+            avg = elapsed / global_processed if global_processed > 0 else 0.0
+            remaining = None
+            if global_total is not None:
+                remaining = max(global_total - global_processed, 0)
+            eta = avg * remaining if remaining is not None else None
+            print(
+                "[kg-build-mtrag]"
+                f" collection={stem} status=completed global={global_processed}/{global_total or '?'}"
+                f" elapsed={_format_eta(elapsed)} eta={_format_eta(eta)}"
+            )
+            completed_collections.add(stem)
+            _write_checkpoint(
+                collection_checkpoint_path,
+                {
+                    "status": "completed",
+                    "collection": stem,
+                    "completed_at": int(time.time()),
+                    "summary": summary,
+                },
+            )
+            _write_checkpoint(
+                root_checkpoint_path,
+                {
+                    "status": "in_progress",
+                    "source_mode": source_mode,
+                    "completed_collections": sorted(completed_collections),
+                    "collections_requested": collection_stems,
+                    "global_processed": global_processed,
+                    "global_total": global_total,
+                },
+            )
 
-        return {
+        result = {
             "output_dir": output_dir,
             "source_mode": source_mode,
             "split_by_collection": True,
             "collections": collection_summaries,
             "total_passages_processed": total_passages,
         }
+        _write_checkpoint(
+            root_checkpoint_path,
+            {
+                "status": "completed",
+                "source_mode": source_mode,
+                "completed_collections": sorted(completed_collections),
+                "collections_requested": collection_stems,
+                "global_processed": global_processed,
+                "global_total": global_total,
+                "summary": result,
+            },
+        )
+        return result
 
     allowed_collections = _collection_names_from_stems(collection_stems)
 
@@ -312,8 +443,22 @@ def run_mtrag_command(
     alias_pairs: set[tuple[str, str, str]] = set()
     aliases: list[dict[str, str]] = []
     collection_counts: dict[str, int] = {}
+    checkpoint_path = Path(output_dir) / COLLECTION_CHECKPOINT
+    started_at = time.time()
+    total_passages_target = len(passages)
 
-    for passage in passages:
+    _write_checkpoint(
+        checkpoint_path,
+        {
+            "status": "in_progress",
+            "source_mode": source_mode,
+            "collections_requested": collection_stems,
+            "passages_total": total_passages_target,
+            "passages_processed": 0,
+        },
+    )
+
+    for index, passage in enumerate(passages, start=1):
         document_id = passage["document_id"]
         text = passage["text"]
         collection = passage["collection"]
@@ -393,6 +538,33 @@ def run_mtrag_command(
                 }
             )
 
+        if progress_every > 0 and (index % progress_every == 0 or index == total_passages_target):
+            _print_progress(
+                collection_label=collection_stems[0] if len(collection_stems) == 1 else "mixed",
+                processed=index,
+                total=total_passages_target,
+                global_processed=None,
+                global_total=None,
+                started_at=started_at,
+            )
+            elapsed = max(0.0, time.time() - started_at)
+            avg = elapsed / index if index > 0 else 0.0
+            eta = avg * max(total_passages_target - index, 0) if index > 0 else None
+            _write_checkpoint(
+                checkpoint_path,
+                {
+                    "status": "in_progress",
+                    "source_mode": source_mode,
+                    "collections_requested": collection_stems,
+                    "passages_total": total_passages_target,
+                    "passages_processed": index,
+                    "elapsed_seconds": elapsed,
+                    "avg_seconds_per_passage": avg,
+                    "eta_seconds": eta,
+                    "last_document_id": document_id,
+                },
+            )
+
     from .extractor import KGExtractionArtifacts
 
     merged_artifacts = KGExtractionArtifacts(
@@ -418,7 +590,7 @@ def run_mtrag_command(
     )
 
     file_paths = save_artifacts(output_dir, merged_artifacts)
-    return {
+    result = {
         "output_dir": output_dir,
         "entities": len(merged_artifacts.entities),
         "relations": len(merged_artifacts.relations),
@@ -428,3 +600,15 @@ def run_mtrag_command(
         "collections": collection_counts,
         "artifacts": file_paths,
     }
+    _write_checkpoint(
+        checkpoint_path,
+        {
+            "status": "completed",
+            "source_mode": source_mode,
+            "collections_requested": collection_stems,
+            "passages_total": total_passages_target,
+            "passages_processed": total_passages_target,
+            "summary": result,
+        },
+    )
+    return result

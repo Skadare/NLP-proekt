@@ -32,6 +32,7 @@ tests/                   Initial test scaffold
 - `graphrag kg-build-mtrag --mtrag-root mt-rag-benchmark --output-dir data/kg/<name>`
 - `graphrag kg-build-mtrag --mtrag-root mt-rag-benchmark --output-dir data/kg/<name> --source-mode passage-corpus --collection fiqa --max-passages 500`
 - `graphrag kg-build-mtrag --mtrag-root mt-rag-benchmark --output-dir data/kg/mtrag_collections --source-mode passage-corpus --split-by-collection --max-passages-per-collection 500 --collection fiqa --collection govt`
+- `graphrag kg-build-mtrag --mtrag-root mt-rag-benchmark --output-dir data/kg/mtrag_collections --source-mode passage-corpus --split-by-collection --max-passages-per-collection 500 --progress-every 10 --resume`
 - `graphrag normalize --question "..." --kg-dir data/kg/<name>`
 - `graphrag retrieve --question "..." --kg-dir data/kg/<name>`
 - `graphrag answer --question "..." --kg-dir data/kg/<name>`
@@ -58,6 +59,7 @@ The pipeline uses a filter-style pattern:
 - `kg-build` is implemented with `kg-gen` and persists KG artifacts.
 - `kg-build-mtrag` is implemented to preserve MT-RAG passage ids/text in provenance.
 - `kg-build-mtrag` supports fast task-context mode and benchmark-faithful passage-corpus mode.
+- `kg-build-mtrag` writes `checkpoint.json` files and supports progress logging plus resume for completed collection sub-builds.
 - `normalize` is implemented (LLM normalization first, alias replacement second).
 - `evaluate` now reads MT-RAG task JSONL directly and emits benchmark-compatible outputs.
 - `evaluate` supports stratified sampling presets (`smoke=8`, `dev=64`, `stable=160`).
