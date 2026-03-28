@@ -11,6 +11,7 @@ from .context import PipelineContext
 from .pipeline.runner import PipelineRunner
 from .result import build_structured_response
 from .steps.kg_gen.command import run_command as run_kg_build_command
+from .steps.kg_gen.mtrag_command import run_mtrag_command as run_mtrag_kg_build_command
 from .steps.standardization.step import StandardizationStep
 from .steps.evaluation.runner import run_evaluation as run_mtrag_evaluation
 
@@ -72,6 +73,44 @@ def normalize(
         "linked_entities": [item.model_dump() for item in result.linked_entities],
     }
     typer.echo(json.dumps(payload, indent=2))
+
+
+@app.command("kg-build-mtrag")
+def kg_build_mtrag(
+    mtrag_root: str = typer.Option(..., "--mtrag-root", help="Path to mt-rag-benchmark repository."),
+    output_dir: str = typer.Option(..., "--output-dir", help="Directory for KG artifacts."),
+    input_file: str | None = typer.Option(
+        None,
+        "--input-file",
+        help="Optional MT-RAG task JSONL. Defaults to mtrag-human/generation_tasks/RAG.jsonl.",
+    ),
+    provider: str = typer.Option(
+        "openai", "--provider", help="Model provider, openai or deepseek."
+    ),
+    model: str = typer.Option("gpt-4o-mini", "--model", help="Model name for kg-gen extraction."),
+    chunk_size: int = typer.Option(5000, "--chunk-size", help="Chunk size for text processing."),
+    cluster: bool = typer.Option(False, "--cluster/--no-cluster", help="Enable kg-gen clustering."),
+    max_tasks: int = typer.Option(0, "--max-tasks", help="Limit number of tasks."),
+    max_passages: int = typer.Option(0, "--max-passages", help="Limit unique passages to ingest."),
+) -> None:
+    """Build a benchmark-aligned KG from MT-RAG tasks."""
+    try:
+        summary = run_mtrag_kg_build_command(
+            mtrag_root=mtrag_root,
+            output_dir=output_dir,
+            input_file=input_file,
+            provider=provider,
+            model=model,
+            chunk_size=chunk_size,
+            cluster=cluster,
+            max_tasks=max_tasks,
+            max_passages=max_passages,
+        )
+    except Exception as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(json.dumps(summary, indent=2))
 
 
 @app.command("retrieve")
@@ -157,7 +196,7 @@ def evaluate(
     output_dir: str = typer.Option("data/eval_out", "--output-dir", help="Output directory."),
     provider: str = typer.Option("openai", "--provider", help="Model provider."),
     model: str = typer.Option("gpt-4o-mini", "--model", help="Model name."),
-    top_k: int = typer.Option(10, "--top-k", help="Number of top facts to return."),
+    top_k: int = typer.Option(5, "--top-k", help="Number of top facts to return."),
     max_tasks: int = typer.Option(0, "--max-tasks", help="Limit number of tasks."),
     skip_generation: bool = typer.Option(False, "--skip-generation", help="Skip generation."),
     retrieval_input: str | None = typer.Option(

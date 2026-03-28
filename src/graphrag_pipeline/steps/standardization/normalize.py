@@ -48,6 +48,9 @@ def normalize_question(
                 "role": "system",
                 "content": (
                     "You normalize user questions for retrieval. "
+                    "If the input is a multi-turn transcript with lines like "
+                    "'|user|: ...' and '|assistant|: ...', rewrite ONLY the latest user turn "
+                    "into a standalone question using necessary context from earlier turns. "
                     "Keep meaning identical, keep language, remove minor grammar noise, "
                     "and do not add new facts or entities. "
                     "Return only the normalized question text."

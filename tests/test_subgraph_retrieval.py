@@ -104,6 +104,80 @@ def test_retrieve_subgraph_falls_back_to_alias_match() -> None:
     assert subgraph.facts[0].head == "Azure Kubernetes Service"
 
 
+def test_retrieve_subgraph_matches_possessive_token_variant() -> None:
+    entities = [
+        Entity(entity_id="ent_1", canonical_name="New England Patriots", aliases=["Patriots"])
+    ]
+    relations = [Relation(relation_id="rel_1", canonical_name="coach")]
+    triples = [Triple(triple_id="trp_1", head_id="ent_1", relation_id="rel_1", tail_id="ent_1")]
+    graph = build_kg_graph(entities, relations, triples)
+
+    subgraph = retrieve_subgraph(
+        "Who is the Patriot's coach?",
+        linked_entities=[],
+        entities=entities,
+        relations=relations,
+        triples=triples,
+        provenance=[],
+        graph=graph,
+        include_two_hop=False,
+    )
+
+    assert subgraph.triple_ids == ["trp_1"]
+
+
+def test_retrieve_subgraph_falls_back_to_token_overlap_anchor() -> None:
+    entities = [Entity(entity_id="ent_1", canonical_name="Safe room")]
+    relations = [Relation(relation_id="rel_1", canonical_name="is used for")]
+    triples = [Triple(triple_id="trp_1", head_id="ent_1", relation_id="rel_1", tail_id="ent_1")]
+    graph = build_kg_graph(entities, relations, triples)
+
+    subgraph = retrieve_subgraph(
+        "What are the sheltered rooms designated for use?",
+        linked_entities=[],
+        entities=entities,
+        relations=relations,
+        triples=triples,
+        provenance=[],
+        graph=graph,
+        include_two_hop=False,
+    )
+
+    assert subgraph.triple_ids == ["trp_1"]
+
+
+def test_retrieve_subgraph_recovers_when_linked_anchor_has_no_edges() -> None:
+    entities = [
+        Entity(entity_id="ent_rooms", canonical_name="rooms"),
+        Entity(entity_id="ent_safe_room", canonical_name="safe room"),
+    ]
+    relations = [Relation(relation_id="rel_1", canonical_name="used for")]
+    triples = [
+        Triple(
+            triple_id="trp_1",
+            head_id="ent_safe_room",
+            relation_id="rel_1",
+            tail_id="ent_safe_room",
+        )
+    ]
+    graph = build_kg_graph(entities, relations, triples)
+
+    subgraph = retrieve_subgraph(
+        "What are the sheltered rooms designated for use?",
+        linked_entities=[
+            LinkedEntity(mention="rooms", entity_id="ent_rooms", canonical_name="rooms")
+        ],
+        entities=entities,
+        relations=relations,
+        triples=triples,
+        provenance=[],
+        graph=graph,
+        include_two_hop=False,
+    )
+
+    assert subgraph.triple_ids == ["trp_1"]
+
+
 def test_retrieve_subgraph_returns_empty_when_no_match() -> None:
     entities = [Entity(entity_id="ent_1", canonical_name="Azure")]
     relations = [Relation(relation_id="rel_1", canonical_name="offers")]

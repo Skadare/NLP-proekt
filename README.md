@@ -26,13 +26,14 @@ src/graphrag_pipeline/   Main Python package
 tests/                   Initial test scaffold
 ```
 
-## Planned Commands
+## CLI Commands
 
 - `graphrag kg-build --input path/to/file.txt`
+- `graphrag kg-build-mtrag --mtrag-root mt-rag-benchmark --output-dir data/kg/<name>`
 - `graphrag normalize --question "..." --kg-dir data/kg/<name>`
 - `graphrag retrieve --question "..." --kg-dir data/kg/<name>`
 - `graphrag answer --question "..." --kg-dir data/kg/<name>`
-- `graphrag evaluate --dataset mtrag`
+- `graphrag evaluate --dataset mtrag --mtrag-root mt-rag-benchmark --kg-dir data/kg/<name>`
 - `graphrag run --question "..." --kg-dir data/kg/<name>`
 
 ## Pipeline Design
@@ -51,5 +52,6 @@ The pipeline uses a filter-style pattern:
 ## Status
 
 - `kg-build` is implemented with `kg-gen` and persists KG artifacts.
+- `kg-build-mtrag` is implemented to preserve MT-RAG passage ids/text in provenance.
 - `normalize` is implemented (LLM normalization first, alias replacement second).
-- Retrieval, answering, and evaluation stages still use placeholder implementations.
+- `evaluate` now reads MT-RAG task JSONL directly and emits benchmark-compatible outputs.

@@ -84,6 +84,7 @@ def map_subgraph_to_contexts(
     return [
         {
             "document_id": item.passage_id,
+            "source": "",
             "score": item.score,
             "text": item.text or "",
             "title": item.title or "",
@@ -97,6 +98,12 @@ def build_retrieval_record(
     task: dict[str, object], contexts: list[dict[str, object]]
 ) -> dict[str, object]:
     record = dict(task)
+    collection = record.get("Collection")
+    if not isinstance(collection, str) or not collection:
+        fallback_collection = record.get("collection")
+        if isinstance(fallback_collection, str) and fallback_collection:
+            record["Collection"] = fallback_collection
+
     record["contexts"] = contexts
     return record
 
@@ -107,6 +114,17 @@ def build_generation_record(
     answer_text: str,
 ) -> dict[str, object]:
     record = dict(task)
+    collection = record.get("Collection")
+    if not isinstance(collection, str) or not collection:
+        fallback_collection = record.get("collection")
+        if isinstance(fallback_collection, str) and fallback_collection:
+            record["Collection"] = fallback_collection
+
+    if "answerability" not in record and "Answerability" in record:
+        answerability = record.get("Answerability")
+        if isinstance(answerability, list):
+            record["answerability"] = answerability
+
     record["contexts"] = contexts
     record["predictions"] = [{"text": answer_text}]
     return record

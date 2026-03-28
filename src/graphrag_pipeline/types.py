@@ -48,6 +48,12 @@ class LinkedEntity(BaseModel):
     score: float | None = None
 
 
+class ConversationMessage(BaseModel):
+    speaker: str
+    text: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class RetrievedFact(BaseModel):
     triple_id: str
     score: float

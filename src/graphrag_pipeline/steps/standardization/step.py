@@ -14,18 +14,37 @@ class StandardizationStep(PipelineStep):
         self.provider = provider
         self.model = model
 
+    @staticmethod
+    def _conversation_to_text(context: PipelineContext) -> str:
+        if not context.conversation_messages:
+            return context.raw_question or ""
+
+        lines: list[str] = []
+        for message in context.conversation_messages:
+            speaker = message.speaker.strip().lower() or "user"
+            text = message.text.strip()
+            if not text:
+                continue
+            lines.append(f"|{speaker}|: {text}")
+
+        if not lines:
+            return context.raw_question or ""
+        return "\n".join(lines)
+
     def run(self, context: PipelineContext) -> PipelineContext:
         if context.raw_question is None or not context.raw_question.strip():
             raise ValueError("PipelineContext.raw_question is required for standardization step.")
 
+        normalization_input = self._conversation_to_text(context)
+
         try:
             llm_normalized = normalize_question(
-                context.raw_question,
+                normalization_input,
                 provider=self.provider,
                 model=self.model,
             )
         except RuntimeError as exc:
-            llm_normalized = context.raw_question
+            llm_normalized = normalization_input
             context.metadata["standardization_warning"] = str(exc)
 
         alias_records = load_alias_records(context.kg_dir) if context.kg_dir is not None else []

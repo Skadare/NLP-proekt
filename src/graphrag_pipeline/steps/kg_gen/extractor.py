@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from hashlib import sha1
+import importlib.machinery
 import importlib.util
 import sys
 import types
@@ -30,13 +31,17 @@ def _ensure_sentence_transformers_available() -> None:
     run without installing heavy retrieval dependencies.
     """
 
+    if "sentence_transformers" in sys.modules:
+        return
+
     try:
         if importlib.util.find_spec("sentence_transformers") is not None:
             return
-    except ModuleNotFoundError:
+    except (ModuleNotFoundError, ValueError):
         pass
 
     module = types.ModuleType("sentence_transformers")
+    module.__spec__ = importlib.machinery.ModuleSpec("sentence_transformers", loader=None)
 
     class SentenceTransformer:  # pragma: no cover - defensive runtime guard
         def __init__(self, *args: object, **kwargs: object) -> None:
@@ -58,15 +63,24 @@ def _ensure_sentence_transformers_available() -> None:
 def _ensure_sklearn_pairwise_available() -> None:
     """Provide a lightweight sklearn cosine_similarity stub if sklearn is absent."""
 
+    if "sklearn.metrics.pairwise" in sys.modules:
+        return
+
     try:
         if importlib.util.find_spec("sklearn.metrics.pairwise") is not None:
             return
-    except ModuleNotFoundError:
+    except (ModuleNotFoundError, ValueError):
         pass
 
     sklearn_module = types.ModuleType("sklearn")
     metrics_module = types.ModuleType("sklearn.metrics")
     pairwise_module = types.ModuleType("sklearn.metrics.pairwise")
+
+    sklearn_module.__spec__ = importlib.machinery.ModuleSpec("sklearn", loader=None)
+    metrics_module.__spec__ = importlib.machinery.ModuleSpec("sklearn.metrics", loader=None)
+    pairwise_module.__spec__ = importlib.machinery.ModuleSpec(
+        "sklearn.metrics.pairwise", loader=None
+    )
 
     def cosine_similarity(x: object, y: object) -> object:
         import numpy as np
