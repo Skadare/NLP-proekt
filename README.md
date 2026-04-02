@@ -39,6 +39,8 @@ tests/                   Initial test scaffold
 - `graphrag evaluate --dataset mtrag --mtrag-root mt-rag-benchmark --kg-dir data/kg/<name>`
 - `graphrag evaluate --dataset mtrag --mtrag-root mt-rag-benchmark --kg-dir data/kg/<name> --sample-mode stratified --sample-preset smoke`
 - `graphrag evaluate --dataset mtrag --mtrag-root mt-rag-benchmark --kg-dir data/kg/mtrag_collections --sample-mode stratified --sample-preset smoke --top-k 8 --run-eval`
+- `graphrag evaluate --dataset mtrag --mtrag-root mt-rag-benchmark --kg-dir data/kg/mtrag_collections --sample-mode stratified --sample-preset dev --top-k 8 --run-eval --progress-every 2 --notify`
+- `graphrag evaluate --dataset mtrag --mtrag-root mt-rag-benchmark --kg-dir data/kg/mtrag_collections --sample-mode stratified --sample-preset dev --top-k 8 --retrieval-strategy corpus --run-eval`
 - `graphrag run --question "..." --kg-dir data/kg/<name>`
 
 ## Pipeline Design
@@ -64,3 +66,5 @@ The pipeline uses a filter-style pattern:
 - `evaluate` now reads MT-RAG task JSONL directly and emits benchmark-compatible outputs.
 - `evaluate` supports stratified sampling presets (`smoke=8`, `dev=64`, `stable=160`).
 - `evaluate` routes tasks to per-collection KG subdirectories when available (`clapnq`, `govt`, `fiqa`, `cloud`).
+- `evaluate` supports per-phase progress/ETA output and optional desktop notifications (`--notify`).
+- `evaluate` supports retrieval strategy selection (`hybrid`, `graph`, `corpus`).

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from graphrag_pipeline.steps.evaluation.runner import (
+    _merge_contexts,
     _filter_tasks_by_ids,
     _resolve_kg_dir_for_collection,
     _sample_tasks,
@@ -87,3 +88,20 @@ def test_resolve_kg_dir_uses_collection_subdir(tmp_path: Path) -> None:
     )
 
     assert resolved == str(clapnq_dir)
+
+
+def test_merge_contexts_prefers_higher_score_and_respects_top_k() -> None:
+    merged = _merge_contexts(
+        [
+            {"document_id": "d1", "score": 1.0, "text": "a"},
+            {"document_id": "d2", "score": 0.3, "text": "b"},
+        ],
+        [
+            {"document_id": "d1", "score": 2.0, "text": "better"},
+            {"document_id": "d3", "score": 0.5, "text": "c"},
+        ],
+        top_k=2,
+    )
+
+    assert [item["document_id"] for item in merged] == ["d1", "d3"]
+    assert merged[0]["score"] == 2.0

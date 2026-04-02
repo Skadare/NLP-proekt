@@ -259,6 +259,21 @@ def evaluate(
         help="Optional preset task count: none, smoke, dev, stable.",
     ),
     seed: int = typer.Option(7, "--seed", help="Random seed for stratified sampling."),
+    retrieval_strategy: str = typer.Option(
+        "hybrid",
+        "--retrieval-strategy",
+        help="Retrieval strategy: hybrid, graph, or corpus.",
+    ),
+    progress_every: int = typer.Option(
+        5,
+        "--progress-every",
+        help="Print progress every N tasks during evaluation.",
+    ),
+    notify: bool = typer.Option(
+        False,
+        "--notify",
+        help="Send desktop notification when evaluation completes.",
+    ),
     run_eval: bool = typer.Option(False, "--run-eval", help="Run retrieval evaluation."),
 ) -> None:
     """Run evaluation."""
@@ -300,6 +315,12 @@ def evaluate(
         argv.extend(["--sample-preset", sample_preset])
     if seed != 7:
         argv.extend(["--seed", str(seed)])
+    if retrieval_strategy != "hybrid":
+        argv.extend(["--retrieval-strategy", retrieval_strategy])
+    if progress_every != 5:
+        argv.extend(["--progress-every", str(progress_every)])
+    if notify:
+        argv.append("--notify")
     if run_eval:
         argv.append("--run-eval")
 
