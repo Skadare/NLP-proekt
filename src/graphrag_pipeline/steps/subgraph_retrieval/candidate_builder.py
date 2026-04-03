@@ -105,16 +105,44 @@ def _anchor_ids_from_token_overlap(question: str, entities: list[Entity]) -> set
     if not question_tokens:
         return set()
 
-    anchor_ids: set[str] = set()
+    scored_entities: list[tuple[str, tuple[int, float, int]]] = []
     for entity in entities:
         names = [entity.canonical_name, *entity.aliases]
+        best_score: tuple[int, float, int] | None = None
         for name in names:
-            overlap = question_tokens.intersection(_important_tokens(name))
-            if overlap:
-                anchor_ids.add(entity.entity_id)
-                break
+            name_tokens = _important_tokens(name)
+            overlap = question_tokens.intersection(name_tokens)
+            if not overlap:
+                continue
 
-    return anchor_ids
+            # Long benchmark questions become noisy when we anchor on generic
+            # single-word entities like country names. Keep these only for short
+            # queries or richer multi-token entity names.
+            if len(overlap) == 1 and len(question_tokens) >= 4 and len(name_tokens) == 1:
+                continue
+
+            score = (
+                len(overlap),
+                len(overlap) / max(len(name_tokens), 1),
+                max(len(token) for token in overlap),
+            )
+            if best_score is None or score > best_score:
+                best_score = score
+
+        if best_score is not None:
+            scored_entities.append((entity.entity_id, best_score))
+
+    if not scored_entities:
+        return set()
+
+    best_overlap = max(score[0] for _, score in scored_entities)
+    strongest = [item for item in scored_entities if item[1][0] == best_overlap]
+    best_coverage = max(score[1] for _, score in strongest)
+    coverage_margin = 0.0 if best_overlap == 1 else 0.25
+
+    return {
+        entity_id for entity_id, score in strongest if score[1] >= best_coverage - coverage_margin
+    }
 
 
 def build_candidates(
@@ -140,6 +168,16 @@ def build_candidates(
     def collect_candidates(active_anchor_ids: set[str]) -> list[dict[str, object]]:
         candidates: list[dict[str, object]] = []
         seen_triples: set[str] = set()
+
+        def iter_out_edges(node_id: str):
+            for neighbor_id, edge_map in graph.succ[node_id].items():
+                for key, data in edge_map.items():
+                    yield node_id, neighbor_id, key, data
+
+        def iter_in_edges(node_id: str):
+            for neighbor_id, edge_map in graph.pred[node_id].items():
+                for key, data in edge_map.items():
+                    yield neighbor_id, node_id, key, data
 
         def add_edge(u: str, v: str, key: str, data: dict[str, object], hop: int) -> None:
             triple_id = str(data.get("triple_id", key))
@@ -172,19 +210,21 @@ def build_candidates(
         for anchor_id in active_anchor_ids:
             if anchor_id not in graph:
                 continue
-            for u, v, key, data in graph.out_edges(anchor_id, keys=True, data=True):
+            for u, v, key, data in iter_out_edges(anchor_id):
                 add_edge(u, v, key, data, hop=1)
-            for u, v, key, data in graph.in_edges(anchor_id, keys=True, data=True):
+            for u, v, key, data in iter_in_edges(anchor_id):
                 add_edge(u, v, key, data, hop=1)
 
         if include_two_hop:
-            one_hop_nodes = {c["head_id"] for c in candidates} | {c["tail_id"] for c in candidates}
+            one_hop_nodes = {str(c["head_id"]) for c in candidates} | {
+                str(c["tail_id"]) for c in candidates
+            }
             for node_id in one_hop_nodes:
                 if node_id not in graph or node_id in active_anchor_ids:
                     continue
-                for u, v, key, data in graph.out_edges(node_id, keys=True, data=True):
+                for u, v, key, data in iter_out_edges(node_id):
                     add_edge(u, v, key, data, hop=2)
-                for u, v, key, data in graph.in_edges(node_id, keys=True, data=True):
+                for u, v, key, data in iter_in_edges(node_id):
                     add_edge(u, v, key, data, hop=2)
 
         return candidates
@@ -192,7 +232,8 @@ def build_candidates(
     candidates = collect_candidates(anchor_ids)
 
     if not candidates:
-        overlap_anchor_ids = _anchor_ids_from_token_overlap(question, entities)
+        remaining_entities = [entity for entity in entities if entity.entity_id not in anchor_ids]
+        overlap_anchor_ids = _anchor_ids_from_token_overlap(question, remaining_entities)
         if overlap_anchor_ids:
             anchor_ids = anchor_ids.union(overlap_anchor_ids)
             candidates = collect_candidates(anchor_ids)

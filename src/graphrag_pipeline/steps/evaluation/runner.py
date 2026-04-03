@@ -79,6 +79,10 @@ _TEXT_REPLACEMENTS = {
     "‚Äô": "'",
 }
 
+_HYBRID_FUSION_K = 60.0
+_HYBRID_PRIMARY_WEIGHT = 0.85
+_HYBRID_SECONDARY_WEIGHT = 1.0
+
 
 def _load_jsonl(path: Path) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
@@ -386,31 +390,46 @@ def _merge_contexts(
             return float(raw)
         return 0.0
 
-    merged: dict[str, dict[str, object]] = {}
-    for context in [*primary, *secondary]:
-        doc_id = context.get("document_id")
-        if not isinstance(doc_id, str) or not doc_id:
-            continue
-        score_raw = context.get("score")
-        score = float(score_raw) if isinstance(score_raw, (int, float)) else 0.0
-        existing = merged.get(doc_id)
-        if existing is None:
-            merged[doc_id] = dict(context)
-            merged[doc_id]["score"] = score
-            continue
+    def clipped(contexts: list[dict[str, object]]) -> list[dict[str, object]]:
+        ranked = [dict(item) for item in contexts]
+        if top_k > 0:
+            ranked = ranked[:top_k]
+        return ranked
 
-        existing_score_raw = existing.get("score")
-        existing_score = (
-            float(existing_score_raw) if isinstance(existing_score_raw, (int, float)) else 0.0
-        )
-        if score > existing_score:
-            existing["score"] = score
-        if not existing.get("text") and context.get("text"):
-            existing["text"] = context.get("text")
-        if not existing.get("title") and context.get("title"):
-            existing["title"] = context.get("title")
-        if not existing.get("url") and context.get("url"):
-            existing["url"] = context.get("url")
+    if not primary:
+        return clipped(secondary)
+    if not secondary:
+        return clipped(primary)
+
+    merged: dict[str, dict[str, object]] = {}
+
+    def merge_ranked(contexts: list[dict[str, object]], *, weight: float) -> None:
+        for rank, context in enumerate(contexts, start=1):
+            doc_id = context.get("document_id")
+            if not isinstance(doc_id, str) or not doc_id:
+                continue
+
+            fused_score = weight / (_HYBRID_FUSION_K + rank)
+            existing = merged.get(doc_id)
+            if existing is None:
+                merged[doc_id] = dict(context)
+                merged[doc_id]["score"] = fused_score
+                continue
+
+            existing_score_raw = existing.get("score")
+            existing_score = (
+                float(existing_score_raw) if isinstance(existing_score_raw, (int, float)) else 0.0
+            )
+            existing["score"] = existing_score + fused_score
+            if not existing.get("text") and context.get("text"):
+                existing["text"] = context.get("text")
+            if not existing.get("title") and context.get("title"):
+                existing["title"] = context.get("title")
+            if not existing.get("url") and context.get("url"):
+                existing["url"] = context.get("url")
+
+    merge_ranked(primary, weight=_HYBRID_PRIMARY_WEIGHT)
+    merge_ranked(secondary, weight=_HYBRID_SECONDARY_WEIGHT)
 
     ranked = sorted(
         merged.values(),
@@ -549,10 +568,16 @@ def _filter_tasks_by_ids(
     return [task for _, task in selected]
 
 
-def _build_runner(*, include_answering: bool, provider: str, model: str) -> PipelineRunner:
+def _build_runner(
+    *,
+    include_answering: bool,
+    provider: str,
+    model: str,
+    include_two_hop: bool = True,
+) -> PipelineRunner:
     steps = [
         StandardizationStep(provider=provider, model=model),
-        SubgraphRetrievalStep(),
+        SubgraphRetrievalStep(include_two_hop=include_two_hop),
     ]
     if include_answering:
         steps.append(AnsweringStep(provider=provider, model=model))
@@ -574,7 +599,12 @@ def _run_tasks(
     phase_label: str,
     retrieval_strategy: str,
 ) -> list[dict[str, object]]:
-    runner = _build_runner(include_answering=include_answering, provider=provider, model=model)
+    runner = _build_runner(
+        include_answering=include_answering,
+        provider=provider,
+        model=model,
+        include_two_hop=False,
+    )
     retrieval_step = runner.steps[1]
     if isinstance(retrieval_step, SubgraphRetrievalStep):
         retrieval_step.top_k = top_k

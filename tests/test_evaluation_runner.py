@@ -1,6 +1,8 @@
 from pathlib import Path
 
+from graphrag_pipeline.steps.subgraph_retrieval.step import SubgraphRetrievalStep
 from graphrag_pipeline.steps.evaluation.runner import (
+    _build_runner,
     _merge_contexts,
     _filter_tasks_by_ids,
     _resolve_kg_dir_for_collection,
@@ -104,4 +106,21 @@ def test_merge_contexts_prefers_higher_score_and_respects_top_k() -> None:
     )
 
     assert [item["document_id"] for item in merged] == ["d1", "d3"]
-    assert merged[0]["score"] == 2.0
+    first_score = merged[0]["score"]
+    second_score = merged[1]["score"]
+    assert isinstance(first_score, (int, float))
+    assert isinstance(second_score, (int, float))
+    assert first_score > second_score
+
+
+def test_build_runner_can_disable_two_hop_retrieval() -> None:
+    runner = _build_runner(
+        include_answering=False,
+        provider="openai",
+        model="gpt-4o-mini",
+        include_two_hop=False,
+    )
+
+    retrieval_step = runner.steps[1]
+    assert isinstance(retrieval_step, SubgraphRetrievalStep)
+    assert retrieval_step.include_two_hop is False

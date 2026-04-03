@@ -4,6 +4,9 @@ import networkx as nx
 import pytest
 
 from graphrag_pipeline.context import PipelineContext
+from graphrag_pipeline.steps.subgraph_retrieval.candidate_builder import (
+    _anchor_ids_from_token_overlap,
+)
 from graphrag_pipeline.steps.subgraph_retrieval.retriever import (
     build_kg_graph,
     load_kg_artifacts,
@@ -144,6 +147,27 @@ def test_retrieve_subgraph_falls_back_to_token_overlap_anchor() -> None:
     )
 
     assert subgraph.triple_ids == ["trp_1"]
+
+
+def test_token_overlap_prefers_specific_multiword_anchor_in_long_query() -> None:
+    anchors = _anchor_ids_from_token_overlap(
+        "Which industry provides the largest employment in India?",
+        entities=[
+            Entity(entity_id="ent_india", canonical_name="India"),
+            Entity(entity_id="ent_textile", canonical_name="Textile industry in India"),
+        ],
+    )
+
+    assert anchors == {"ent_textile"}
+
+
+def test_token_overlap_keeps_single_word_anchor_for_short_query() -> None:
+    anchors = _anchor_ids_from_token_overlap(
+        "What is Kubernetes?",
+        entities=[Entity(entity_id="ent_1", canonical_name="Kubernetes")],
+    )
+
+    assert anchors == {"ent_1"}
 
 
 def test_retrieve_subgraph_recovers_when_linked_anchor_has_no_edges() -> None:
