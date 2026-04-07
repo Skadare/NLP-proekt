@@ -116,6 +116,11 @@ def kg_build_mtrag(
         "--max-passages-per-collection",
         help="Passage cap per collection when split-by-collection is enabled.",
     ),
+    allow_full_corpus: bool = typer.Option(
+        False,
+        "--allow-full-corpus",
+        help="Allow uncapped passage-corpus ingestion (can be very large).",
+    ),
     progress_every: int = typer.Option(
         10,
         "--progress-every",
@@ -143,6 +148,7 @@ def kg_build_mtrag(
             collections=collections,
             split_by_collection=split_by_collection,
             max_passages_per_collection=max_passages_per_collection,
+            allow_full_corpus=allow_full_corpus,
             progress_every=progress_every,
             resume=resume,
         )
@@ -264,6 +270,11 @@ def evaluate(
         "--retrieval-strategy",
         help="Retrieval strategy: hybrid, graph, or corpus.",
     ),
+    retrieval_benchmark_mode: str = typer.Option(
+        "none",
+        "--retrieval-benchmark-mode",
+        help="Benchmark retrieval query mode: none, lastturn, rewrite.",
+    ),
     progress_every: int = typer.Option(
         5,
         "--progress-every",
@@ -275,6 +286,16 @@ def evaluate(
         help="Send desktop notification when evaluation completes.",
     ),
     run_eval: bool = typer.Option(False, "--run-eval", help="Run retrieval evaluation."),
+    judge_provider: str = typer.Option(
+        "auto",
+        "--judge-provider",
+        help="Generation judge provider: auto, openai, hf, vllm.",
+    ),
+    judge_model: str = typer.Option(
+        "ibm-granite/granite-3.3-8b-instruct",
+        "--judge-model",
+        help="Judge model for hf/vllm provider.",
+    ),
 ) -> None:
     """Run evaluation."""
     if dataset != "mtrag":
@@ -317,12 +338,18 @@ def evaluate(
         argv.extend(["--seed", str(seed)])
     if retrieval_strategy != "hybrid":
         argv.extend(["--retrieval-strategy", retrieval_strategy])
+    if retrieval_benchmark_mode != "none":
+        argv.extend(["--retrieval-benchmark-mode", retrieval_benchmark_mode])
     if progress_every != 5:
         argv.extend(["--progress-every", str(progress_every)])
     if notify:
         argv.append("--notify")
     if run_eval:
         argv.append("--run-eval")
+    if judge_provider != "auto":
+        argv.extend(["--judge-provider", judge_provider])
+    if judge_model != "ibm-granite/granite-3.3-8b-instruct":
+        argv.extend(["--judge-model", judge_model])
 
     original_argv = sys.argv
     try:

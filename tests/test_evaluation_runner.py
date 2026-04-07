@@ -1,10 +1,13 @@
+import json
 from pathlib import Path
 
 from graphrag_pipeline.steps.subgraph_retrieval.step import SubgraphRetrievalStep
 from graphrag_pipeline.steps.evaluation.runner import (
     _build_runner,
+    _clean_retrieval_text,
     _merge_contexts,
     _filter_tasks_by_ids,
+    _load_mtrag_retrieval_tasks,
     _resolve_kg_dir_for_collection,
     _sample_tasks,
 )
@@ -124,3 +127,39 @@ def test_build_runner_can_disable_two_hop_retrieval() -> None:
     retrieval_step = runner.steps[1]
     assert isinstance(retrieval_step, SubgraphRetrievalStep)
     assert retrieval_step.include_two_hop is False
+
+
+def test_clean_retrieval_text_removes_user_prefixes() -> None:
+    raw = "|user|: First question\n|user|: Follow up"
+
+    cleaned = _clean_retrieval_text(raw)
+
+    assert cleaned == "First question\nFollow up"
+
+
+def test_load_mtrag_retrieval_tasks_builds_records(tmp_path: Path) -> None:
+    retrieval_root = tmp_path / "mtrag-human" / "retrieval_tasks"
+    for stem in ["clapnq", "cloud", "fiqa", "govt"]:
+        stem_dir = retrieval_root / stem
+        stem_dir.mkdir(parents=True)
+        payload = {"_id": f"{stem}<::>2", "text": "|user|: Sample question"}
+        (stem_dir / f"{stem}_rewrite.jsonl").write_text(
+            json.dumps(payload) + "\n",
+            encoding="utf-8",
+        )
+
+    tasks = _load_mtrag_retrieval_tasks(mtrag_root=tmp_path, mode="rewrite")
+
+    assert len(tasks) == 4
+    task_ids = {task["task_id"] for task in tasks}
+    assert task_ids == {
+        "clapnq<::>2",
+        "cloud<::>2",
+        "fiqa<::>2",
+        "govt<::>2",
+    }
+    for task in tasks:
+        assert isinstance(task.get("Collection"), str)
+        input_messages = task.get("input")
+        assert isinstance(input_messages, list)
+        assert input_messages[0]["text"] == "Sample question"

@@ -36,6 +36,8 @@ COLLECTION_STEM_BY_NAME = {
     "mt-rag-ibmcloud-elser-512-100-20240502": "cloud",
 }
 
+COLLECTION_NAME_BY_STEM = {value: key for key, value in COLLECTION_STEM_BY_NAME.items()}
+
 _RETRIEVAL_STOPWORDS = {
     "a",
     "an",
@@ -188,6 +190,76 @@ def _extract_task_id(task: dict[str, object]) -> str | None:
     if isinstance(task_id, str) and task_id:
         return task_id
     return None
+
+
+def _clean_retrieval_text(text: str) -> str:
+    lines = text.splitlines()
+    cleaned_lines: list[str] = []
+    for line in lines:
+        value = line.strip()
+        if not value:
+            continue
+        value = re.sub(r"^\|[^|]+\|:\s*", "", value)
+        value = value.strip()
+        if value:
+            cleaned_lines.append(value)
+
+    if not cleaned_lines:
+        return text.strip()
+    return "\n".join(cleaned_lines)
+
+
+def _build_retrieval_task_from_query(
+    *,
+    collection: str,
+    task_id: str,
+    text: str,
+) -> dict[str, object]:
+    conversation_id = task_id
+    if "<::>" in task_id:
+        conversation_id, _, _ = task_id.partition("<::>")
+    question = _clean_retrieval_text(text)
+    return {
+        "conversation_id": conversation_id,
+        "task_id": task_id,
+        "Collection": collection,
+        "input": [{"speaker": "user", "text": question}],
+    }
+
+
+def _load_mtrag_retrieval_tasks(
+    *,
+    mtrag_root: Path,
+    mode: str,
+) -> list[dict[str, object]]:
+    if mode not in {"lastturn", "rewrite"}:
+        raise ValueError("--retrieval-benchmark-mode must be one of: none, lastturn, rewrite")
+
+    task_suffix = "lastturn" if mode == "lastturn" else "rewrite"
+    retrieval_root = mtrag_root / "mtrag-human" / "retrieval_tasks"
+    tasks: list[dict[str, object]] = []
+
+    for stem in sorted(COLLECTION_NAME_BY_STEM):
+        collection_name = COLLECTION_NAME_BY_STEM[stem]
+        retrieval_file = retrieval_root / stem / f"{stem}_{task_suffix}.jsonl"
+        if not retrieval_file.exists() or not retrieval_file.is_file():
+            raise FileNotFoundError(f"Missing retrieval benchmark file: {retrieval_file}")
+
+        for raw_task in _load_jsonl(retrieval_file):
+            task_id = raw_task.get("_id")
+            text = raw_task.get("text")
+            if not isinstance(task_id, str) or not task_id:
+                continue
+            if not isinstance(text, str) or not text.strip():
+                continue
+            task = _build_retrieval_task_from_query(
+                collection=collection_name,
+                task_id=task_id,
+                text=text,
+            )
+            tasks.append(task)
+
+    return tasks
 
 
 def _normalize_text(text: str) -> str:
@@ -744,6 +816,10 @@ def _run_mtrag_eval(
     retrieval_predictions: Path,
     generation_predictions: Path | None,
     output_dir: Path,
+    judge_provider: str,
+    judge_model: str,
+    openai_key: str | None,
+    azure_host: str | None,
 ) -> None:
     _ensure_mtrag_retrieval_layout(mtrag_root)
 
@@ -764,19 +840,39 @@ def _run_mtrag_eval(
         return
 
     generation_out = output_dir / "generation_eval.jsonl"
+    provider = judge_provider
+    if provider == "auto":
+        if openai_key and azure_host:
+            provider = "openai"
+        else:
+            provider = "hf"
+
+    generation_command = [
+        "python",
+        str(mtrag_root / "scripts" / "evaluation" / "run_generation_eval.py"),
+        "-i",
+        str(generation_predictions),
+        "-o",
+        str(generation_out),
+        "-e",
+        str(mtrag_root / "scripts" / "evaluation" / "config.yaml"),
+        "--provider",
+        provider,
+    ]
+
+    if provider in {"hf", "vllm"}:
+        generation_command.extend(["--judge_model", judge_model])
+    elif provider == "openai":
+        if not openai_key or not azure_host:
+            raise ValueError(
+                "Generation eval with judge provider 'openai' requires OPENAI_API_KEY and OPENAI_AZURE_HOST env vars."
+            )
+        generation_command.extend(["--openai_key", openai_key, "--azure_host", azure_host])
+    else:
+        raise ValueError("--judge-provider must be one of: auto, openai, hf, vllm")
+
     subprocess.run(
-        [
-            "python",
-            str(mtrag_root / "scripts" / "evaluation" / "run_generation_eval.py"),
-            "-i",
-            str(generation_predictions),
-            "-o",
-            str(generation_out),
-            "--provider",
-            "hf",
-            "--judge_model",
-            "ibm-granite/granite-3.3-8b-instruct",
-        ],
+        generation_command,
         check=True,
     )
 
@@ -835,9 +931,12 @@ def run_evaluation() -> None:
     parser.add_argument("--sample-preset", type=str, default="none")
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--retrieval-strategy", type=str, default="hybrid")
+    parser.add_argument("--retrieval-benchmark-mode", type=str, default="none")
     parser.add_argument("--progress-every", type=int, default=5)
     parser.add_argument("--notify", action="store_true")
     parser.add_argument("--run-eval", action="store_true")
+    parser.add_argument("--judge-provider", type=str, default="auto")
+    parser.add_argument("--judge-model", type=str, default="ibm-granite/granite-3.3-8b-instruct")
     args = parser.parse_args()
     if args.top_k < 1 or args.top_k > 10:
         raise ValueError("--top-k must be in range [1, 10] for MT-RAG format compatibility.")
@@ -848,22 +947,42 @@ def run_evaluation() -> None:
         raise ValueError("--sample-preset must be one of: none, smoke, dev, stable")
     if args.retrieval_strategy not in {"hybrid", "graph", "corpus"}:
         raise ValueError("--retrieval-strategy must be one of: hybrid, graph, corpus")
+    if args.retrieval_benchmark_mode not in {"none", "lastturn", "rewrite"}:
+        raise ValueError("--retrieval-benchmark-mode must be one of: none, lastturn, rewrite")
+    if args.judge_provider not in {"auto", "openai", "hf", "vllm"}:
+        raise ValueError("--judge-provider must be one of: auto, openai, hf, vllm")
 
     max_tasks = args.max_tasks
     if args.sample_preset != "none" and max_tasks <= 0:
         max_tasks = SAMPLE_PRESET_TASKS[args.sample_preset]
 
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+
     default_rag = args.mtrag_root / "mtrag-human" / "generation_tasks" / "RAG.jsonl"
-    retrieval_input = args.retrieval_input or default_rag
+    retrieval_tasks_full: list[dict[str, object]]
+    retrieval_input_path: Path
+    if args.retrieval_input is not None:
+        retrieval_input_path = args.retrieval_input
+        retrieval_tasks_full = _load_jsonl(retrieval_input_path)
+    elif args.retrieval_benchmark_mode != "none":
+        retrieval_tasks_full = _load_mtrag_retrieval_tasks(
+            mtrag_root=args.mtrag_root,
+            mode=args.retrieval_benchmark_mode,
+        )
+        retrieval_input_path = args.output_dir / "retrieval_input_resolved.jsonl"
+        _write_jsonl(retrieval_input_path, retrieval_tasks_full)
+    else:
+        retrieval_input_path = default_rag
+        retrieval_tasks_full = _load_jsonl(retrieval_input_path)
+
     generation_input = args.generation_input or default_rag
     retrieval_tasks = _sample_tasks(
-        _load_jsonl(retrieval_input),
+        retrieval_tasks_full,
         max_tasks=max_tasks,
         sample_mode=args.sample_mode,
         seed=args.seed,
     )
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
     retrieval_predictions = args.output_dir / "retrieval_predictions.jsonl"
     corpus_context_cache: dict[tuple[str, str], list[dict[str, object]]] = {}
 
@@ -885,7 +1004,7 @@ def run_evaluation() -> None:
     retrieval_checker_input = _write_checker_input_if_sliced(
         output_dir=args.output_dir,
         file_name="retrieval_input_sliced.jsonl",
-        input_path=retrieval_input,
+        input_path=retrieval_input_path,
         tasks=retrieval_tasks,
         max_tasks=max_tasks,
     )
@@ -976,11 +1095,17 @@ def run_evaluation() -> None:
         )
 
     if args.run_eval:
+        openai_key = os.getenv("OPENAI_API_KEY")
+        azure_host = os.getenv("OPENAI_AZURE_HOST")
         _run_mtrag_eval(
             mtrag_root=args.mtrag_root,
             retrieval_predictions=retrieval_predictions,
-            generation_predictions=None,
+            generation_predictions=generation_predictions,
             output_dir=args.output_dir,
+            judge_provider=args.judge_provider,
+            judge_model=args.judge_model,
+            openai_key=openai_key,
+            azure_host=azure_host,
         )
 
     if args.notify:

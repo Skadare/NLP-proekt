@@ -260,6 +260,7 @@ def run_mtrag_command(
     collections: list[str] | None = None,
     split_by_collection: bool = False,
     max_passages_per_collection: int = 0,
+    allow_full_corpus: bool = False,
     progress_every: int = 10,
     resume: bool = False,
 ) -> dict[str, object]:
@@ -284,10 +285,10 @@ def run_mtrag_command(
         per_collection_limit = (
             max_passages_per_collection if max_passages_per_collection > 0 else max_passages
         )
-        if source_mode == "passage-corpus" and per_collection_limit <= 0:
+        if source_mode == "passage-corpus" and per_collection_limit <= 0 and not allow_full_corpus:
             raise ValueError(
                 "split-by-collection with passage-corpus requires --max-passages "
-                "or --max-passages-per-collection."
+                "or --max-passages-per-collection, or explicit --allow-full-corpus."
             )
 
         output_root = Path(output_dir)
@@ -339,6 +340,7 @@ def run_mtrag_command(
                 collections=[stem],
                 split_by_collection=False,
                 max_passages_per_collection=0,
+                allow_full_corpus=allow_full_corpus,
                 progress_every=progress_every,
                 resume=resume,
             )
@@ -418,9 +420,10 @@ def run_mtrag_command(
             allowed_collections=allowed_collections,
         )
     elif source_mode == "passage-corpus":
-        if max_passages <= 0:
+        if max_passages <= 0 and not allow_full_corpus:
             raise ValueError(
-                "--max-passages is required for passage-corpus mode to avoid accidental full-corpus runs."
+                "--max-passages is required for passage-corpus mode to avoid accidental full-corpus runs. "
+                "Use --allow-full-corpus to run uncapped."
             )
         corpus_dir = _default_corpus_dir(mtrag_root)
         passages = _iter_unique_passages_from_corpus(

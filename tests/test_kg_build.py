@@ -191,3 +191,72 @@ def test_mtrag_build_resume_skips_completed_collection(tmp_path: Path, monkeypat
     assert isinstance(collections, dict)
     assert "clapnq" in collections
     assert "govt" in collections
+
+
+def test_mtrag_build_passage_corpus_requires_explicit_full_corpus_opt_in(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    try:
+        run_mtrag_command(
+            mtrag_root=str(tmp_path),
+            output_dir=str(tmp_path / "out"),
+            source_mode="passage-corpus",
+            max_passages=0,
+            allow_full_corpus=False,
+            collections=["clapnq"],
+        )
+    except ValueError as exc:
+        assert "--allow-full-corpus" in str(exc)
+        return
+
+    assert False, "Expected ValueError when passage-corpus is uncapped without allow_full_corpus."
+
+
+def test_mtrag_build_passage_corpus_allows_uncapped_with_explicit_opt_in(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    fake_result = KGExtractionArtifacts(
+        entities=[],
+        relations=[],
+        triples=[],
+        provenance=[],
+        aliases=[],
+        metadata={"model": "openai/gpt-4o-mini"},
+    )
+
+    def fake_extract(*args, **kwargs):  # type: ignore[no-untyped-def]
+        return fake_result
+
+    monkeypatch.setattr(
+        "graphrag_pipeline.steps.kg_gen.mtrag_command.extract_graph_from_text",
+        fake_extract,
+    )
+
+    monkeypatch.setattr(
+        "graphrag_pipeline.steps.kg_gen.mtrag_command._iter_unique_passages_from_corpus",
+        lambda **kwargs: [
+            {
+                "document_id": "doc_1",
+                "text": "alpha text",
+                "collection": "mt-rag-clapnq-elser-512-100-20240503",
+                "source": "",
+                "url": "",
+            }
+        ],
+    )
+
+    summary = run_mtrag_command(
+        mtrag_root=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+        source_mode="passage-corpus",
+        max_passages=0,
+        allow_full_corpus=True,
+        collections=["clapnq"],
+    )
+
+    processed = summary.get("passages_processed")
+    assert processed == 1

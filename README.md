@@ -33,6 +33,7 @@ tests/                   Initial test scaffold
 - `graphrag kg-build-mtrag --mtrag-root mt-rag-benchmark --output-dir data/kg/<name> --source-mode passage-corpus --collection fiqa --max-passages 500`
 - `graphrag kg-build-mtrag --mtrag-root mt-rag-benchmark --output-dir data/kg/mtrag_collections --source-mode passage-corpus --split-by-collection --max-passages-per-collection 500 --collection fiqa --collection govt`
 - `graphrag kg-build-mtrag --mtrag-root mt-rag-benchmark --output-dir data/kg/mtrag_collections --source-mode passage-corpus --split-by-collection --max-passages-per-collection 500 --progress-every 10 --resume`
+- `graphrag kg-build-mtrag --mtrag-root mt-rag-benchmark --output-dir data/kg/mtrag_collections_full --source-mode passage-corpus --split-by-collection --collection clapnq --collection cloud --collection fiqa --collection govt --allow-full-corpus --resume`
 - `graphrag normalize --question "..." --kg-dir data/kg/<name>`
 - `graphrag retrieve --question "..." --kg-dir data/kg/<name>`
 - `graphrag answer --question "..." --kg-dir data/kg/<name>`
@@ -41,6 +42,9 @@ tests/                   Initial test scaffold
 - `graphrag evaluate --dataset mtrag --mtrag-root mt-rag-benchmark --kg-dir data/kg/mtrag_collections --sample-mode stratified --sample-preset smoke --top-k 8 --run-eval`
 - `graphrag evaluate --dataset mtrag --mtrag-root mt-rag-benchmark --kg-dir data/kg/mtrag_collections --sample-mode stratified --sample-preset dev --top-k 8 --run-eval --progress-every 2 --notify`
 - `graphrag evaluate --dataset mtrag --mtrag-root mt-rag-benchmark --kg-dir data/kg/mtrag_collections --sample-mode stratified --sample-preset dev --top-k 8 --retrieval-strategy corpus --run-eval`
+- `graphrag evaluate --dataset mtrag --mtrag-root mt-rag-benchmark --kg-dir data/kg/mtrag_collections --sample-mode stratified --sample-preset dev --retrieval-benchmark-mode lastturn --skip-generation --run-eval`
+- `graphrag evaluate --dataset mtrag --mtrag-root mt-rag-benchmark --kg-dir data/kg/mtrag_collections --sample-mode stratified --sample-preset dev --retrieval-benchmark-mode rewrite --skip-generation --run-eval`
+- `graphrag evaluate --dataset mtrag --mtrag-root mt-rag-benchmark --kg-dir data/kg/mtrag_collections --sample-mode stratified --sample-preset dev --run-eval --judge-provider auto --judge-model ibm-granite/granite-3.3-8b-instruct`
 - `graphrag run --question "..." --kg-dir data/kg/<name>`
 
 ## Pipeline Design
@@ -68,3 +72,4 @@ The pipeline uses a filter-style pattern:
 - `evaluate` routes tasks to per-collection KG subdirectories when available (`clapnq`, `govt`, `fiqa`, `cloud`).
 - `evaluate` supports per-phase progress/ETA output and optional desktop notifications (`--notify`).
 - `evaluate` supports retrieval strategy selection (`hybrid`, `graph`, `corpus`).
+- `evaluate` supports benchmark retrieval query modes (`lastturn`, `rewrite`) and generation judge selection (`auto`, `openai`, `hf`, `vllm`).
