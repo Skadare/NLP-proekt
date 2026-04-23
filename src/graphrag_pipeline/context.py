@@ -7,7 +7,16 @@ from typing import Any
 import networkx as nx
 from pydantic import BaseModel, ConfigDict, Field
 
-from .types import AnswerResult, Entity, LinkedEntity, ProvenanceRecord, Relation, SubgraphResult, Triple
+from .types import (
+    AnswerResult,
+    ConversationMessage,
+    Entity,
+    LinkedEntity,
+    ProvenanceRecord,
+    Relation,
+    SubgraphResult,
+    Triple,
+)
 
 
 class PipelineContext(BaseModel):
@@ -19,6 +28,10 @@ class PipelineContext(BaseModel):
     raw_text: str | None = None
     raw_question: str | None = None
     normalized_question: str | None = None
+    conversation_id: str | None = None
+    task_id: str | None = None
+    collection: str | None = None
+    conversation_messages: list[ConversationMessage] = Field(default_factory=list)
 
     entities: list[Entity] = Field(default_factory=list)
     relations: list[Relation] = Field(default_factory=list)

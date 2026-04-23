@@ -11,6 +11,7 @@ from .context import PipelineContext
 from .pipeline.runner import PipelineRunner
 from .result import build_structured_response
 from .steps.kg_gen.command import run_command as run_kg_build_command
+from .steps.kg_gen.mtrag_command import run_mtrag_command as run_mtrag_kg_build_command
 from .steps.standardization.step import StandardizationStep
 from .steps.evaluation.runner import run_evaluation as run_mtrag_evaluation
 
@@ -67,11 +68,95 @@ def normalize(
 
     payload = {
         "raw_question": result.raw_question,
+        "standalone_rewrite": result.metadata.get("standalone_rewrite"),
+        "retrieval_query": result.metadata.get("retrieval_query"),
         "llm_normalized_question": result.metadata.get("llm_normalized_question"),
         "normalized_question": result.normalized_question,
         "linked_entities": [item.model_dump() for item in result.linked_entities],
     }
     typer.echo(json.dumps(payload, indent=2))
+
+
+@app.command("kg-build-mtrag")
+def kg_build_mtrag(
+    mtrag_root: str = typer.Option(
+        ..., "--mtrag-root", help="Path to mt-rag-benchmark repository."
+    ),
+    output_dir: str = typer.Option(..., "--output-dir", help="Directory for KG artifacts."),
+    input_file: str | None = typer.Option(
+        None,
+        "--input-file",
+        help="Optional MT-RAG task JSONL. Defaults to mtrag-human/generation_tasks/RAG.jsonl.",
+    ),
+    provider: str = typer.Option(
+        "openai", "--provider", help="Model provider, openai or deepseek."
+    ),
+    model: str = typer.Option("gpt-4o-mini", "--model", help="Model name for kg-gen extraction."),
+    chunk_size: int = typer.Option(5000, "--chunk-size", help="Chunk size for text processing."),
+    cluster: bool = typer.Option(False, "--cluster/--no-cluster", help="Enable kg-gen clustering."),
+    max_tasks: int = typer.Option(0, "--max-tasks", help="Limit number of tasks."),
+    max_passages: int = typer.Option(0, "--max-passages", help="Limit unique passages to ingest."),
+    source_mode: str = typer.Option(
+        "task-contexts",
+        "--source-mode",
+        help="Data source: task-contexts (fast smoke) or passage-corpus (benchmark-faithful).",
+    ),
+    collections: list[str] = typer.Option(
+        [],
+        "--collection",
+        help="Collection filters for passage-corpus mode: clapnq/govt/fiqa/cloud or MT-RAG collection names.",
+    ),
+    split_by_collection: bool = typer.Option(
+        False,
+        "--split-by-collection",
+        help="Build one KG directory per selected collection under output-dir.",
+    ),
+    max_passages_per_collection: int = typer.Option(
+        0,
+        "--max-passages-per-collection",
+        help="Passage cap per collection when split-by-collection is enabled.",
+    ),
+    allow_full_corpus: bool = typer.Option(
+        False,
+        "--allow-full-corpus",
+        help="Allow uncapped passage-corpus ingestion (can be very large).",
+    ),
+    progress_every: int = typer.Option(
+        10,
+        "--progress-every",
+        help="Print progress and update checkpoint every N passages.",
+    ),
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        help="Skip completed collection builds when checkpoints already exist.",
+    ),
+) -> None:
+    """Build a benchmark-aligned KG from MT-RAG tasks."""
+    try:
+        summary = run_mtrag_kg_build_command(
+            mtrag_root=mtrag_root,
+            output_dir=output_dir,
+            input_file=input_file,
+            provider=provider,
+            model=model,
+            chunk_size=chunk_size,
+            cluster=cluster,
+            max_tasks=max_tasks,
+            max_passages=max_passages,
+            source_mode=source_mode,
+            collections=collections,
+            split_by_collection=split_by_collection,
+            max_passages_per_collection=max_passages_per_collection,
+            allow_full_corpus=allow_full_corpus,
+            progress_every=progress_every,
+            resume=resume,
+        )
+    except Exception as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(json.dumps(summary, indent=2))
 
 
 @app.command("retrieve")
@@ -157,7 +242,7 @@ def evaluate(
     output_dir: str = typer.Option("data/eval_out", "--output-dir", help="Output directory."),
     provider: str = typer.Option("openai", "--provider", help="Model provider."),
     model: str = typer.Option("gpt-4o-mini", "--model", help="Model name."),
-    top_k: int = typer.Option(10, "--top-k", help="Number of top facts to return."),
+    top_k: int = typer.Option(8, "--top-k", help="Number of top facts to return."),
     max_tasks: int = typer.Option(0, "--max-tasks", help="Limit number of tasks."),
     skip_generation: bool = typer.Option(False, "--skip-generation", help="Skip generation."),
     retrieval_input: str | None = typer.Option(
@@ -169,7 +254,48 @@ def evaluate(
     debug_task_id: str | None = typer.Option(
         None, "--debug-task-id", help="Log debug output for a single task id."
     ),
+    sample_mode: str = typer.Option(
+        "head",
+        "--sample-mode",
+        help="Task sampling mode when max-tasks is set: head or stratified.",
+    ),
+    sample_preset: str = typer.Option(
+        "none",
+        "--sample-preset",
+        help="Optional preset task count: none, smoke, dev, stable.",
+    ),
+    seed: int = typer.Option(7, "--seed", help="Random seed for stratified sampling."),
+    retrieval_strategy: str = typer.Option(
+        "hybrid",
+        "--retrieval-strategy",
+        help="Retrieval strategy: hybrid, graph, or corpus.",
+    ),
+    retrieval_benchmark_mode: str = typer.Option(
+        "none",
+        "--retrieval-benchmark-mode",
+        help="Benchmark retrieval query mode: none, lastturn, rewrite.",
+    ),
+    progress_every: int = typer.Option(
+        5,
+        "--progress-every",
+        help="Print progress every N tasks during evaluation.",
+    ),
+    notify: bool = typer.Option(
+        False,
+        "--notify",
+        help="Send desktop notification when evaluation completes.",
+    ),
     run_eval: bool = typer.Option(False, "--run-eval", help="Run retrieval evaluation."),
+    judge_provider: str = typer.Option(
+        "auto",
+        "--judge-provider",
+        help="Generation judge provider: auto, openai, hf, vllm.",
+    ),
+    judge_model: str = typer.Option(
+        "ibm-granite/granite-3.3-8b-instruct",
+        "--judge-model",
+        help="Judge model for hf/vllm provider.",
+    ),
 ) -> None:
     """Run evaluation."""
     if dataset != "mtrag":
@@ -204,8 +330,26 @@ def evaluate(
         argv.extend(["--generation-input", generation_input])
     if debug_task_id is not None:
         argv.extend(["--debug-task-id", debug_task_id])
+    if sample_mode != "head":
+        argv.extend(["--sample-mode", sample_mode])
+    if sample_preset != "none":
+        argv.extend(["--sample-preset", sample_preset])
+    if seed != 7:
+        argv.extend(["--seed", str(seed)])
+    if retrieval_strategy != "hybrid":
+        argv.extend(["--retrieval-strategy", retrieval_strategy])
+    if retrieval_benchmark_mode != "none":
+        argv.extend(["--retrieval-benchmark-mode", retrieval_benchmark_mode])
+    if progress_every != 5:
+        argv.extend(["--progress-every", str(progress_every)])
+    if notify:
+        argv.append("--notify")
     if run_eval:
         argv.append("--run-eval")
+    if judge_provider != "auto":
+        argv.extend(["--judge-provider", judge_provider])
+    if judge_model != "ibm-granite/granite-3.3-8b-instruct":
+        argv.extend(["--judge-model", judge_model])
 
     original_argv = sys.argv
     try:

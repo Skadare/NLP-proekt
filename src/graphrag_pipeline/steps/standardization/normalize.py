@@ -47,10 +47,14 @@ def normalize_question(
             {
                 "role": "system",
                 "content": (
-                    "You normalize user questions for retrieval. "
-                    "Keep meaning identical, keep language, remove minor grammar noise, "
-                    "and do not add new facts or entities. "
-                    "Return only the normalized question text."
+                    "You are a query rewriting system for a retrieval-augmented generation "
+                    "pipeline. If the input is a multi-turn transcript with lines like "
+                    "'|user|: ...' and '|assistant|: ...', rewrite ONLY the latest user question "
+                    "into a standalone retrieval query using necessary context from earlier turns. "
+                    "Preserve the original meaning exactly. Expand the query with relevant keywords "
+                    "and context. Make implicit entities explicit. Add related terms only when "
+                    "clearly useful and faithful to user intent. Do NOT answer the question. "
+                    "Do NOT explain anything. Output ONLY the rewritten query."
                 ),
             },
             {

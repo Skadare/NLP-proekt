@@ -4,13 +4,16 @@ import networkx as nx
 import pytest
 
 from graphrag_pipeline.context import PipelineContext
+from graphrag_pipeline.steps.subgraph_retrieval.candidate_builder import (
+    _anchor_ids_from_token_overlap,
+)
 from graphrag_pipeline.steps.subgraph_retrieval.retriever import (
     build_kg_graph,
     load_kg_artifacts,
     retrieve_subgraph,
 )
 from graphrag_pipeline.steps.subgraph_retrieval.step import SubgraphRetrievalStep
-from graphrag_pipeline.types import Entity, LinkedEntity, Relation, Triple
+from graphrag_pipeline.types import Entity, LinkedEntity, ProvenanceRecord, Relation, Triple
 
 
 def _simple_graph_fixture() -> tuple[list[Entity], list[Relation], list[Triple], nx.MultiDiGraph]:
@@ -102,6 +105,101 @@ def test_retrieve_subgraph_falls_back_to_alias_match() -> None:
 
     assert subgraph.triple_ids == ["trp_1"]
     assert subgraph.facts[0].head == "Azure Kubernetes Service"
+
+
+def test_retrieve_subgraph_matches_possessive_token_variant() -> None:
+    entities = [
+        Entity(entity_id="ent_1", canonical_name="New England Patriots", aliases=["Patriots"])
+    ]
+    relations = [Relation(relation_id="rel_1", canonical_name="coach")]
+    triples = [Triple(triple_id="trp_1", head_id="ent_1", relation_id="rel_1", tail_id="ent_1")]
+    graph = build_kg_graph(entities, relations, triples)
+
+    subgraph = retrieve_subgraph(
+        "Who is the Patriot's coach?",
+        linked_entities=[],
+        entities=entities,
+        relations=relations,
+        triples=triples,
+        provenance=[],
+        graph=graph,
+        include_two_hop=False,
+    )
+
+    assert subgraph.triple_ids == ["trp_1"]
+
+
+def test_retrieve_subgraph_falls_back_to_token_overlap_anchor() -> None:
+    entities = [Entity(entity_id="ent_1", canonical_name="Safe room")]
+    relations = [Relation(relation_id="rel_1", canonical_name="is used for")]
+    triples = [Triple(triple_id="trp_1", head_id="ent_1", relation_id="rel_1", tail_id="ent_1")]
+    graph = build_kg_graph(entities, relations, triples)
+
+    subgraph = retrieve_subgraph(
+        "What are the sheltered rooms designated for use?",
+        linked_entities=[],
+        entities=entities,
+        relations=relations,
+        triples=triples,
+        provenance=[],
+        graph=graph,
+        include_two_hop=False,
+    )
+
+    assert subgraph.triple_ids == ["trp_1"]
+
+
+def test_token_overlap_prefers_specific_multiword_anchor_in_long_query() -> None:
+    anchors = _anchor_ids_from_token_overlap(
+        "Which industry provides the largest employment in India?",
+        entities=[
+            Entity(entity_id="ent_india", canonical_name="India"),
+            Entity(entity_id="ent_textile", canonical_name="Textile industry in India"),
+        ],
+    )
+
+    assert anchors == {"ent_textile"}
+
+
+def test_token_overlap_keeps_single_word_anchor_for_short_query() -> None:
+    anchors = _anchor_ids_from_token_overlap(
+        "What is Kubernetes?",
+        entities=[Entity(entity_id="ent_1", canonical_name="Kubernetes")],
+    )
+
+    assert anchors == {"ent_1"}
+
+
+def test_retrieve_subgraph_recovers_when_linked_anchor_has_no_edges() -> None:
+    entities = [
+        Entity(entity_id="ent_rooms", canonical_name="rooms"),
+        Entity(entity_id="ent_safe_room", canonical_name="safe room"),
+    ]
+    relations = [Relation(relation_id="rel_1", canonical_name="used for")]
+    triples = [
+        Triple(
+            triple_id="trp_1",
+            head_id="ent_safe_room",
+            relation_id="rel_1",
+            tail_id="ent_safe_room",
+        )
+    ]
+    graph = build_kg_graph(entities, relations, triples)
+
+    subgraph = retrieve_subgraph(
+        "What are the sheltered rooms designated for use?",
+        linked_entities=[
+            LinkedEntity(mention="rooms", entity_id="ent_rooms", canonical_name="rooms")
+        ],
+        entities=entities,
+        relations=relations,
+        triples=triples,
+        provenance=[],
+        graph=graph,
+        include_two_hop=False,
+    )
+
+    assert subgraph.triple_ids == ["trp_1"]
 
 
 def test_retrieve_subgraph_returns_empty_when_no_match() -> None:
@@ -381,6 +479,55 @@ def test_subgraph_step_uses_normalized_question_first() -> None:
     )
     result = SubgraphRetrievalStep(top_k=1, include_two_hop=False).run(context)
     assert result.subgraph.triple_ids == ["trp_1"]
+
+
+def test_subgraph_step_falls_back_to_raw_question_if_rewrite_fails() -> None:
+    entities, relations, triples, graph = _simple_graph_fixture()
+    context = PipelineContext(
+        raw_question="What does Azure offer?",
+        normalized_question="What does GCP offer?",
+        entities=entities,
+        relations=relations,
+        triples=triples,
+        provenance=[],
+        graph=graph,
+        metadata={
+            "retrieval_query": "What does GCP offer?",
+            "standalone_rewrite": "What does GCP offer?",
+        },
+    )
+
+    result = SubgraphRetrievalStep(top_k=1, include_two_hop=False).run(context)
+
+    assert result.subgraph.triple_ids == ["trp_1"]
+    assert result.metadata["retrieval_query_used"] == "What does Azure offer?"
+
+
+def test_retrieve_subgraph_falls_back_to_passage_snippet_match() -> None:
+    provenance = [
+        ProvenanceRecord(
+            provenance_id="prov_1",
+            doc_id="Economy of India",
+            passage_id="passage_1",
+            snippet="The services sector has the largest share of India's GDP.",
+        )
+    ]
+
+    subgraph = retrieve_subgraph(
+        "What sector has the largest share of India's GDP?",
+        linked_entities=[],
+        entities=[],
+        relations=[],
+        triples=[],
+        provenance=provenance,
+        graph=build_kg_graph([], [], []),
+        top_k=3,
+        include_two_hop=False,
+    )
+
+    assert subgraph.facts
+    assert subgraph.facts[0].provenance_id == "prov_1"
+    assert subgraph.facts[0].relation == "mentions"
 
 
 def test_subgraph_step_requires_question() -> None:

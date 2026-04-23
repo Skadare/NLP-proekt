@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from graphrag_pipeline.context import PipelineContext
+from graphrag_pipeline.types import ConversationMessage
 from graphrag_pipeline.steps.standardization.aliases import load_alias_records, replace_aliases
 from graphrag_pipeline.steps.standardization.step import StandardizationStep
 
@@ -59,5 +60,36 @@ def test_standardization_step_llm_then_alias(monkeypatch, tmp_path: Path) -> Non
     result = StandardizationStep().run(context)
 
     assert result.metadata["llm_normalized_question"] == "What is the capital of US?"
+    assert result.metadata["standalone_rewrite"] == "What is the capital of US?"
+    assert result.metadata["retrieval_query"] == "What is the capital of United States?"
     assert result.normalized_question == "What is the capital of United States?"
     assert len(result.linked_entities) == 1
+
+
+def test_standardization_uses_full_conversation_when_available(monkeypatch) -> None:
+    captured = {"question": ""}
+
+    def fake_normalize(question: str, *, provider: str, model: str) -> str:
+        captured["question"] = question
+        return "Where do they play this week?"
+
+    monkeypatch.setattr(
+        "graphrag_pipeline.steps.standardization.step.normalize_question", fake_normalize
+    )
+
+    context = PipelineContext(
+        raw_question="Where do they play this week?",
+        conversation_messages=[
+            ConversationMessage(speaker="user", text="Tell me about the Arizona Cardinals."),
+            ConversationMessage(speaker="assistant", text="They are an NFL team."),
+            ConversationMessage(speaker="user", text="Where do they play this week?"),
+        ],
+    )
+
+    StandardizationStep().run(context)
+
+    assert captured["question"] == (
+        "|user|: Tell me about the Arizona Cardinals.\n"
+        "|assistant|: They are an NFL team.\n"
+        "|user|: Where do they play this week?"
+    )
